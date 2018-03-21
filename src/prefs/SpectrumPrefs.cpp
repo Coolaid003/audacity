@@ -69,6 +69,8 @@ enum {
    ID_WINDOW_TYPE,
    ID_PADDING_SIZE,
    ID_SCALE,
+   ID_FREQLABEL,
+   ID_TICKSTUNINGFREQ,
    ID_ALGORITHM,
    ID_MINIMUM,
    ID_MAXIMUM,
@@ -105,6 +107,7 @@ void SpectrumPrefs::Populate(size_t windowSize)
    }
 
    mScaleChoices = SpectrogramSettings::GetScaleNames();
+   mFreqLabelChoices = SpectrogramSettings::GetFreqLabelNames();
 
    mAlgorithmChoices = SpectrogramSettings::GetAlgorithmNames();
 
@@ -187,6 +190,14 @@ void SpectrumPrefs::PopulateOrExchange(ShuttleGui & S)
          mMaxFreq =
             S.Id(ID_MAXIMUM).TieNumericTextBox(_("Ma&ximum Frequency (Hz):"),
             mTempSettings.maxFreq,
+            12);
+
+         S.Id(ID_FREQLABEL).TieChoice(_("Frequency Labels") + wxString(wxT(":")),
+                 *(int*)&mTempSettings.freqLabelType,
+                 &mFreqLabelChoices);
+
+         mTicksTuningFreq = S.Id(ID_TICKSTUNINGFREQ).TieNumericTextBox(_("Tuning Freqency for ticks (Hz):"),
+            mTempSettings.ticksTuningFreq,
             12);
       }
       S.EndTwoColumn();
@@ -357,6 +368,12 @@ bool SpectrumPrefs::Validate()
       return false;
    }
 #endif //EXPERIMENTAL_FIND_NOTES
+
+   double ticksTuningFreq = 0.0;
+   if (!mTicksTuningFreq->GetValue().ToDouble(&ticksTuningFreq)) {
+      AudacityMessageBox(_("Tuning freqency must be a floating point value."));
+      return false;
+   }
 
    ShuttleGui S(this, eIsSavingToPrefs);
    PopulateOrExchange(S);
@@ -569,6 +586,8 @@ BEGIN_EVENT_TABLE(SpectrumPrefs, PrefsPanel)
    EVT_CHOICE(ID_WINDOW_TYPE, SpectrumPrefs::OnControl)
    EVT_CHOICE(ID_PADDING_SIZE, SpectrumPrefs::OnControl)
    EVT_CHOICE(ID_SCALE, SpectrumPrefs::OnControl)
+   EVT_CHOICE(ID_FREQLABEL, SpectrumPrefs::OnControl)
+   EVT_TEXT(ID_TICKSTUNINGFREQ, SpectrumPrefs::OnControl)
    EVT_TEXT(ID_MINIMUM, SpectrumPrefs::OnControl)
    EVT_TEXT(ID_MAXIMUM, SpectrumPrefs::OnControl)
    EVT_TEXT(ID_GAIN, SpectrumPrefs::OnControl)

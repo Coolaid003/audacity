@@ -69,6 +69,7 @@ class SpectrumPrefs final : public PrefsPanel
 
    wxTextCtrl *mMinFreq;
    wxTextCtrl *mMaxFreq;
+   wxTextCtrl *mTicksTuningFreq;
    wxTextCtrl *mGain;
    wxTextCtrl *mRange;
    wxTextCtrl *mFrequencyGain;
@@ -83,6 +84,7 @@ class SpectrumPrefs final : public PrefsPanel
 
    wxArrayString mTypeChoices;
    wxArrayString mScaleChoices;
+   wxArrayString mFreqLabelChoices;
 
    wxChoice *mAlgorithmChoice;
    wxArrayString mAlgorithmChoices;

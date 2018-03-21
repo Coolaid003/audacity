@@ -29,6 +29,7 @@ Paul Licameli
 #include "../Experimental.h"
 #include "../widgets/ErrorDialog.h"
 #include "../Internat.h"
+#include "../Clamp.h"
 
 SpectrogramSettings::Globals::Globals()
 {
@@ -75,6 +76,8 @@ SpectrogramSettings::SpectrogramSettings(const SpectrogramSettings &other)
 #endif
    , isGrayscale(other.isGrayscale)
    , scaleType(other.scaleType)
+   , freqLabelType(other.freqLabelType)
+   , ticksTuningFreq(other.ticksTuningFreq)
 #ifndef SPECTRAL_SELECTION_GLOBAL_SWITCH
    , spectralSelection(other.spectralSelection)
 #endif
@@ -112,6 +115,8 @@ SpectrogramSettings &SpectrogramSettings::operator= (const SpectrogramSettings &
 #endif
       isGrayscale = other.isGrayscale;
       scaleType = other.scaleType;
+      freqLabelType = other.freqLabelType;
+      ticksTuningFreq = other.ticksTuningFreq;
 #ifndef SPECTRAL_SELECTION_GLOBAL_SWITCH
       spectralSelection = other.spectralSelection;
 #endif
@@ -163,6 +168,20 @@ const wxArrayString &SpectrogramSettings::GetScaleNames()
    return theArray.Get();
 }
 
+const wxArrayString &SpectrogramSettings::GetFreqLabelNames()
+{
+    class FreqLabelNamesArray final : public TranslatableStringArray
+    {
+        void Populate() override
+        {
+            mContents.Add(_("Hertz (Hz)"));
+            mContents.Add(_("Notes (Equal Temperament)"));
+        }
+    };
+    static FreqLabelNamesArray theArray;
+    return theArray.Get();
+}
+
 //static
 const wxArrayString &SpectrogramSettings::GetAlgorithmNames()
 {
@@ -210,6 +229,15 @@ bool SpectrogramSettings::Validate(bool quiet)
       maxFreq = std::max(1 + minFreq, maxFreq);
 
    if (!quiet &&
+      (ticksTuningFreq < 100.0 || 1000.0 < ticksTuningFreq)) {
+      AudacityMessageBox(_("Tuning freqency of the musical note A must be between 100Hz and 1000Hz"));
+       return false;
+   }
+   else
+       ticksTuningFreq = Clamp(ticksTuningFreq, 100.0, 1000.0);
+
+
+   if (!quiet &&
       range <= 0) {
       AudacityMessageBox(_("The range must be at least 1 dB"));
       return false;
@@ -234,15 +262,10 @@ bool SpectrogramSettings::Validate(bool quiet)
    // The rest are controlled by drop-down menus so they can't go wrong
    // in the Preferences dialog, but we also come here after reading fom saved
    // preference files, which could be or from future versions.  Validate quietly.
-   windowType =
-      std::max(0, std::min(NumWindowFuncs() - 1, windowType));
-   scaleType =
-      ScaleType(std::max(0,
-         std::min((int)(SpectrogramSettings::stNumScaleTypes) - 1,
-            (int)(scaleType))));
-   algorithm = Algorithm(
-      std::max(0, std::min((int)(algNumAlgorithms) - 1, (int)(algorithm)))
-   );
+   windowType = Clamp(windowType, 0, NumWindowFuncs() - 1);
+   scaleType = ScaleType(Clamp((int)scaleType, 0, SpectrogramSettings::stNumScaleTypes - 1));
+   freqLabelType = FreqLabelType(Clamp((int)freqLabelType, 0, fltNumFreqLabelTypes - 1));
+   algorithm = Algorithm(Clamp((int)algorithm, 0, algNumAlgorithms - 1));
    ConvertToEnumeratedWindowSizes();
    ConvertToActualWindowSizes();
 
@@ -270,6 +293,8 @@ void SpectrogramSettings::LoadPrefs()
    isGrayscale = (gPrefs->Read(wxT("/Spectrum/Grayscale"), 0L) != 0);
 
    scaleType = ScaleType(gPrefs->Read(wxT("/Spectrum/ScaleType"), 0L));
+   freqLabelType = FreqLabelType(gPrefs->Read(wxT("/Spectrum/FreqLabelType"), 0L));
+   ticksTuningFreq = gPrefs->Read(wxT("/Spectrum/TicksTuningFreq"), 440.0);
 
 #ifndef SPECTRAL_SELECTION_GLOBAL_SWITCH
    spectralSelection = (gPrefs->Read(wxT("/Spectrum/EnableSpectralSelection"), 0L) != 0);
@@ -318,6 +343,8 @@ void SpectrogramSettings::SavePrefs()
    gPrefs->Write(wxT("/Spectrum/Grayscale"), isGrayscale);
 
    gPrefs->Write(wxT("/Spectrum/ScaleType"), (int) scaleType);
+   gPrefs->Write(wxT("/Spectrum/FreqLabelType"), (int) freqLabelType);
+   gPrefs->Write(wxT("/Spectrum/TicksTuningFreq"), ticksTuningFreq);
 
 #ifndef SPECTRAL_SELECTION_GLOBAL_SWITCH
    gPrefs->Write(wxT("/Spectrum/EnableSpectralSelection"), spectralSelection);

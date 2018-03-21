@@ -162,7 +162,6 @@ Ruler::Ruler()
 
    mValid = false;
 
-   mCustom = false;
    mbMinor = true;
 
    mGridLineLength = 0;
@@ -216,6 +215,26 @@ void Ruler::SetUnits(const wxString &units)
 
       Invalidate();
    }
+}
+
+void Ruler::CustomTicks(const std::vector<double> & values, const wxArrayString& labels, bool major, bool minor)
+{
+    wxASSERT( values.size() == labels.GetCount() );
+    if(major)
+    {
+        mCustomMajorTicksValues = values;
+        mCustomMajorTicksLabels = labels;
+    }
+    else if(minor)
+    {
+        mCustomMinorTicksValues = values;
+        mCustomMinorTicksLabels = labels;
+    }
+    else
+    {
+        mCustomMinorMinorTicksValues = values;
+        mCustomMinorMinorTicksLabels = labels;
+    }
 }
 
 void Ruler::SetOrientation(int orient)
@@ -762,9 +781,8 @@ wxString Ruler::LabelString(double d, bool major)
    return s;
 }
 
-void Ruler::Tick(int pos, double d, bool major, bool minor)
+void Ruler::TickWithLabel(int pos, const wxString& l, double d, bool major, bool minor)
 {
-   wxString l;
    wxCoord strW, strH, strD, strL;
    int strPos, strLen, strLeft, strTop;
 
@@ -792,7 +810,6 @@ void Ruler::Tick(int pos, double d, bool major, bool minor)
    label->text = wxT("");
 
    mDC->SetFont(major? *mMajorFont: minor? *mMinorFont : *mMinorMinorFont);
-   l = LabelString(d, major);
    mDC->GetTextExtent(l, &strW, &strH, &strD, &strL);
 
    if (mOrientation == wxHORIZONTAL) {
@@ -867,121 +884,37 @@ void Ruler::Tick(int pos, double d, bool major, bool minor)
 
    wxRect r(strLeft, strTop, strW, strH);
    mRect.Union(r);
-
 }
 
-void Ruler::TickCustom(int labelIdx, bool major, bool minor)
+void Ruler::Tick(int pos, double d, bool major, bool minor)
 {
-   //This should only used in the mCustom case
-   // Many code comes from 'Tick' method: this should
-   // be optimized.
-
-   int pos;
-   wxString l;
-   wxCoord strW, strH, strD, strL;
-   int strPos, strLen, strLeft, strTop;
-
    // FIXME: We don't draw a tick if of end of our label arrays
    // But we shouldn't have an array of labels.
+   if( mNumMinorMinor >= mLength )
+      return;
    if( mNumMinor >= mLength )
       return;
    if( mNumMajor >= mLength )
       return;
+   TickWithLabel(pos, LabelString(d, major), d, major, minor);
+}
 
-   Label *label;
-   if (major)
-      label = &mMajorLabels[labelIdx];
-   else if (minor)
-      label = &mMinorLabels[labelIdx];
-   else
-      label = &mMinorMinorLabels[labelIdx];
-
-   label->value = 0.0;
-   pos = label->pos;         // already stored in label class
-   l   = label->text;
-   label->lx = mLeft - 1000; // don't display
-   label->ly = mTop - 1000;  // don't display
-
-   mDC->SetFont(major? *mMajorFont: minor? *mMinorFont : *mMinorMinorFont);
-
-   mDC->GetTextExtent(l, &strW, &strH, &strD, &strL);
-
-   if (mOrientation == wxHORIZONTAL) {
-      strLen = strW;
-      strPos = pos - strW/2;
-      if (strPos < 0)
-         strPos = 0;
-      if (strPos + strW >= mLength)
-         strPos = mLength - strW;
-      strLeft = mLeft + strPos;
-      if (mFlip) {
-         strTop = mTop + 4;
-         mMaxHeight = max(mMaxHeight, strH + 4);
-      }
-      else {
-
-         strTop = mTop- mLead+4;// More space was needed...
-         mMaxHeight = max(mMaxHeight, strH + 6);
-      }
-   }
-   else {
-      strLen = strH;
-      strPos = pos - strH/2;
-      if (strPos < 0)
-         strPos = 0;
-      if (strPos + strH >= mLength)
-         strPos = mLength - strH;
-      strTop = mTop + strPos;
-      if (mFlip) {
-         strLeft = mLeft + 5;
-         mMaxWidth = max(mMaxWidth, strW + 5);
-      }
-      else {
-
-         strLeft =-strW-6;
+void Ruler::UpdateCustomTicks(const std::vector<double>& customValues, const wxArrayString& customLabels, double min, double max, const NumberScale& numberScale, bool major, bool minor)
+{
+   wxASSERT( customValues.size() == customLabels.GetCount() );
+   std::vector<double>::const_iterator vit = customValues.cbegin();
+   while(vit != customValues.cend())
+   {
+       const double val = *vit;
+       if(min < val && val < max)
+       {
+           const int idx = std::distance(customValues.cbegin(), vit);
+           const int pos(0.5 + mLength * numberScale.ValueToPosition(val));
+           wxASSERT( idx < customLabels.GetCount() );
+           TickWithLabel(pos, customLabels[idx], val, major, minor);
        }
+       ++vit;
    }
-
-
-   // FIXME: we shouldn't even get here if strPos < 0.
-   // Ruler code currently does  not handle very small or
-   // negative sized windows (i.e. don't draw) properly.
-   if( strPos < 0 )
-      return;
-
-   // See if any of the pixels we need to draw this
-   // label is already covered
-
-   int i;
-   for(i=0; i<strLen; i++)
-      if (mBits[strPos+i])
-         return;
-
-   // If not, position the label
-
-   label->lx = strLeft;
-   label->ly = strTop;
-
-   // And mark these pixels, plus some surrounding
-   // ones (the spacing between labels), as covered
-   int leftMargin = mSpacing;
-   if (strPos < leftMargin)
-      leftMargin = strPos;
-   strPos -= leftMargin;
-   strLen += leftMargin;
-
-   int rightMargin = mSpacing;
-   if (strPos + strLen > mLength - mSpacing)
-      rightMargin = mLength - strPos - strLen;
-   strLen += rightMargin;
-
-   for(i=0; i<strLen; i++)
-      mBits[strPos+i] = 1;
-
-
-   wxRect r(strLeft, strTop, strW, strH);
-   mRect.Union(r);
-
 }
 
 void Ruler::Update()
@@ -1068,18 +1001,17 @@ void Ruler::Update(const TimeTrack* timetrack)// Envelope *speedEnv, long minSpe
    // FIXME: Surely we do not need to allocate storage for the labels?
    // We can just recompute them as we need them?  Yes, but only if
    // mCustom is false!!!!
+   // FIXME: mCustom does not exist anymore
 
    auto size = static_cast<size_t>(mLength + 1);
-   if(!mCustom) {
-      mNumMajor = 0;
-      mNumMinor = 0;
-      mNumMinorMinor = 0;
-      if (mLength!=mLengthOld) {
-         mMajorLabels.reinit(size);
-         mMinorLabels.reinit(size);
-         mMinorMinorLabels.reinit(size);
-         mLengthOld = mLength;
-      }
+   mNumMajor = 0;
+   mNumMinor = 0;
+   mNumMinorMinor = 0;
+   if (mLength!=mLengthOld) {
+      mMajorLabels.reinit(size);
+      mMinorLabels.reinit(size);
+      mMinorMinorLabels.reinit(size);
+      mLengthOld = mLength;
    }
 
    mBits.reinit(size);
@@ -1091,176 +1023,176 @@ void Ruler::Update(const TimeTrack* timetrack)// Envelope *speedEnv, long minSpe
          mBits[i] = 0;
 
    // *************** Label calculation routine **************
-   if(mCustom == true) {
-
-      // SET PARAMETER IN MCUSTOM CASE
-      // Works only with major labels
-
-      int numLabel = mNumMajor;
-
-      i = 0;
-      while((i<numLabel) && (i<=mLength)) {
-
-         TickCustom(i, true, false);
-         i++;
-      }
-
-   } else if(mLog==false) {
-
-      // Use the "hidden" min and max to determine the tick size.
-      // That may make a difference with fisheye.
-      // Otherwise you may see the tick size for the whole ruler change
-      // when the fisheye approaches start or end.
-      double UPP = (mHiddenMax-mHiddenMin)/mLength;  // Units per pixel
-      FindLinearTickSizes(UPP);
-
-      // Left and Right Edges
-      if (mLabelEdges) {
-         Tick(0, mMin, true, false);
-         Tick(mLength, mMax, true, false);
-      }
-
-      // Zero (if it's in the middle somewhere)
-      if (mMin * mMax < 0.0) {
-         int mid;
-         if (zoomInfo != NULL)
-            mid = (int)(zoomInfo->TimeToPosition(0.0, mLeftOffset));
-         else
-            mid = (int)(mLength*(mMin / (mMin - mMax)) + 0.5);
-         const int iMaxPos = (mOrientation == wxHORIZONTAL) ? mRight : mBottom - 5;
-         if (mid >= 0 && mid < iMaxPos)
-            Tick(mid, 0.0, true, false);
-      }
-
-      double sg = UPP > 0.0? 1.0: -1.0;
-
-      // Major and minor ticks
-      for (int jj = 0; jj < 2; ++jj) {
-         const double denom = jj == 0 ? mMajor : mMinor;
-         i = -1; j = 0;
-         double d, warpedD, nextD;
-
-         double prevTime = 0.0, time = 0.0;
-         if (zoomInfo != NULL) {
-            j = zoomInfo->TimeToPosition(mMin);
-            prevTime = zoomInfo->PositionToTime(--j);
-            time = zoomInfo->PositionToTime(++j);
-            d = (prevTime + time) / 2.0;
-         }
-         else
-            d = mMin - UPP / 2;
-         if (timetrack)
-            warpedD = timetrack->ComputeWarpedLength(0.0, d);
-         else
-            warpedD = d;
-         // using ints doesn't work, as
-         // this will overflow and be negative at high zoom.
-         double step = floor(sg * warpedD / denom);
-         while (i <= mLength) {
-            i++;
-            if (zoomInfo)
-            {
-               prevTime = time;
-               time = zoomInfo->PositionToTime(++j);
-               nextD = (prevTime + time) / 2.0;
-               // wxASSERT(time >= prevTime);
-            }
-            else
-               nextD = d + UPP;
-            if (timetrack)
-               warpedD += timetrack->ComputeWarpedLength(d, nextD);
-            else
-               warpedD = nextD;
-            d = nextD;
-
-            if (floor(sg * warpedD / denom) > step) {
-               step = floor(sg * warpedD / denom);
-               bool major = jj == 0;
-               Tick(i, sg * step * denom, major, !major);
-            }
-         }
-      }
-
-      // Left and Right Edges
-      if (mLabelEdges) {
-         Tick(0, mMin, true, false);
-         Tick(mLength, mMax, true, false);
-      }
+   if(!mCustomMajorTicksValues.empty() || !mCustomMinorTicksValues.empty() || !mCustomMinorMinorTicksValues.empty())
+   {
+       NumberScale numberScale(mpNumberScale ? *mpNumberScale
+            : NumberScale(mLog ? nstLogarithmic :nstLinear, mMin, mMax)
+         );
+       const double rMin = std::min(mMin, mMax);
+       const double rMax = std::max(mMin, mMax);
+       UpdateCustomTicks(mCustomMajorTicksValues, mCustomMajorTicksLabels, rMin, rMax, numberScale, true, false);
+       UpdateCustomTicks(mCustomMinorTicksValues, mCustomMinorTicksLabels, rMin, rMax, numberScale, false, true);
+       UpdateCustomTicks(mCustomMinorMinorTicksValues, mCustomMinorMinorTicksLabels, rMin, rMax, numberScale, false, false);
    }
-   else {
-      // log case
+   else
+   {
+      if(mLog==false) {
 
-      NumberScale numberScale(mpNumberScale
-         ? *mpNumberScale
-         : NumberScale(nstLogarithmic, mMin, mMax)
-      );
+         // Use the "hidden" min and max to determine the tick size.
+         // That may make a difference with fisheye.
+         // Otherwise you may see the tick size for the whole ruler change
+         // when the fisheye approaches start or end.
+         double UPP = (mHiddenMax-mHiddenMin)/mLength;  // Units per pixel
+         FindLinearTickSizes(UPP);
 
-      mDigits=2; //TODO: implement dynamic digit computation
-      double loLog = log10(mMin);
-      double hiLog = log10(mMax);
-      int loDecade = (int) floor(loLog);
-
-      double val;
-      double startDecade = pow(10., (double)loDecade);
-
-      // Major ticks are the decades
-      double decade = startDecade;
-      double delta=hiLog-loLog, steps=fabs(delta);
-      double step = delta>=0 ? 10 : 0.1;
-      double rMin=std::min(mMin, mMax), rMax=std::max(mMin, mMax);
-      for(i=0; i<=steps; i++)
-      {  // if(i!=0)
-         {  val = decade;
-            if(val >= rMin && val < rMax) {
-               const int pos(0.5 + mLength * numberScale.ValueToPosition(val));
-               Tick(pos, val, true, false);
-            }
+         // Left and Right Edges
+         if (mLabelEdges) {
+            Tick(0, mMin, true, false);
+            Tick(mLength, mMax, true, false);
          }
-         decade *= step;
-      }
 
-      // Minor ticks are multiples of decades
-      decade = startDecade;
-      float start, end, mstep;
-      if (delta > 0)
-      {  start=2; end=10; mstep=1;
-      }else
-      {  start=9; end=1; mstep=-1;
-      }
-      steps++;
-      for(i=0; i<=steps; i++) {
-         for(j=start; j!=end; j+=mstep) {
-            val = decade * j;
-            if(val >= rMin && val < rMax) {
-               const int pos(0.5 + mLength * numberScale.ValueToPosition(val));
-               Tick(pos, val, false, true);
-            }
+         // Zero (if it's in the middle somewhere)
+         if (mMin * mMax < 0.0) {
+            int mid;
+            if (zoomInfo != NULL)
+               mid = (int)(zoomInfo->TimeToPosition(0.0, mLeftOffset));
+            else
+               mid = (int)(mLength*(mMin / (mMin - mMax)) + 0.5);
+            const int iMaxPos = (mOrientation == wxHORIZONTAL) ? mRight : mBottom - 5;
+            if (mid >= 0 && mid < iMaxPos)
+               Tick(mid, 0.0, true, false);
          }
-         decade *= step;
-      }
 
-      // MinorMinor ticks are multiples of decades
-      decade = startDecade;
-      if (delta > 0)
-      {  start= 10; end=100; mstep= 1;
-      }else
-      {  start=100; end= 10; mstep=-1;
-      }
-      steps++;
-      for (i = 0; i <= steps; i++) {
-         // PRL:  Bug1038.  Don't label 1.6, rounded, as a duplicate tick for "2"
-         if (!(mFormat == IntFormat && decade < 10.0)) {
-            for (int f = start; f != (int)(end); f += mstep) {
-               if ((int)(f / 10) != f / 10.0f) {
-                  val = decade * f / 10;
-                  if (val >= rMin && val < rMax) {
-                     const int pos(0.5 + mLength * numberScale.ValueToPosition(val));
-                     Tick(pos, val, false, false);
-                  }
+         double sg = UPP > 0.0? 1.0: -1.0;
+
+         // Major and minor ticks
+         for (int jj = 0; jj < 2; ++jj) {
+            const double denom = jj == 0 ? mMajor : mMinor;
+            i = -1; j = 0;
+            double d, warpedD, nextD;
+
+            double prevTime = 0.0, time = 0.0;
+            if (zoomInfo != NULL) {
+               j = zoomInfo->TimeToPosition(mMin);
+               prevTime = zoomInfo->PositionToTime(--j);
+               time = zoomInfo->PositionToTime(++j);
+               d = (prevTime + time) / 2.0;
+            }
+            else
+               d = mMin - UPP / 2;
+            if (timetrack)
+               warpedD = timetrack->ComputeWarpedLength(0.0, d);
+            else
+               warpedD = d;
+            // using ints doesn't work, as
+            // this will overflow and be negative at high zoom.
+            double step = floor(sg * warpedD / denom);
+            while (i <= mLength) {
+               i++;
+               if (zoomInfo)
+               {
+                  prevTime = time;
+                  time = zoomInfo->PositionToTime(++j);
+                  nextD = (prevTime + time) / 2.0;
+                  // wxASSERT(time >= prevTime);
+               }
+               else
+                  nextD = d + UPP;
+               if (timetrack)
+                  warpedD += timetrack->ComputeWarpedLength(d, nextD);
+               else
+                  warpedD = nextD;
+               d = nextD;
+
+               if (floor(sg * warpedD / denom) > step) {
+                  step = floor(sg * warpedD / denom);
+                  bool major = jj == 0;
+                  Tick(i, sg * step * denom, major, !major);
                }
             }
          }
-         decade *= step;
+
+         // Left and Right Edges
+         if (mLabelEdges) {
+            Tick(0, mMin, true, false);
+            Tick(mLength, mMax, true, false);
+         }
+      }
+      else {
+         // log case
+
+         NumberScale numberScale(mpNumberScale
+            ? *mpNumberScale
+            : NumberScale(nstLogarithmic, mMin, mMax)
+         );
+
+         mDigits=2; //TODO: implement dynamic digit computation
+         double loLog = log10(mMin);
+         double hiLog = log10(mMax);
+         int loDecade = (int) floor(loLog);
+
+         double val;
+         double startDecade = pow(10., (double)loDecade);
+
+         // Major ticks are the decades
+         double decade = startDecade;
+         double delta=hiLog-loLog, steps=fabs(delta);
+         double step = delta>=0 ? 10 : 0.1;
+         double rMin=std::min(mMin, mMax), rMax=std::max(mMin, mMax);
+         for(i=0; i<=steps; i++)
+         {  // if(i!=0)
+            {  val = decade;
+               if(val >= rMin && val < rMax) {
+                  const int pos(0.5 + mLength * numberScale.ValueToPosition(val));
+                  Tick(pos, val, true, false);
+               }
+            }
+            decade *= step;
+         }
+
+         // Minor ticks are multiples of decades
+         decade = startDecade;
+         float start, end, mstep;
+         if (delta > 0)
+         {  start=2; end=10; mstep=1;
+         }else
+         {  start=9; end=1; mstep=-1;
+         }
+         steps++;
+         for(i=0; i<=steps; i++) {
+            for(j=start; j!=end; j+=mstep) {
+               val = decade * j;
+               if(val >= rMin && val < rMax) {
+                  const int pos(0.5 + mLength * numberScale.ValueToPosition(val));
+                  Tick(pos, val, false, true);
+               }
+            }
+            decade *= step;
+         }
+
+         // MinorMinor ticks are multiples of decades
+         decade = startDecade;
+         if (delta > 0)
+         {  start= 10; end=100; mstep= 1;
+         }else
+         {  start=100; end= 10; mstep=-1;
+         }
+         steps++;
+         for (i = 0; i <= steps; i++) {
+            // PRL:  Bug1038.  Don't label 1.6, rounded, as a duplicate tick for "2"
+            if (!(mFormat == IntFormat && decade < 10.0)) {
+               for (int f = start; f != (int)(end); f += mstep) {
+                  if ((int)(f / 10) != f / 10.0f) {
+                     val = decade * f / 10;
+                     if (val >= rMin && val < rMax) {
+                        const int pos(0.5 + mLength * numberScale.ValueToPosition(val));
+                        Tick(pos, val, false, false);
+                     }
+                  }
+               }
+            }
+            decade *= step;
+         }
       }
    }
 
@@ -1544,33 +1476,6 @@ void Ruler::GetMaxSize(wxCoord *width, wxCoord *height)
 
    if (height)
       *height = mRect.GetHeight(); //mMaxHeight;
-}
-
-
-void Ruler::SetCustomMode(bool value) { mCustom = value; }
-
-void Ruler::SetCustomMajorLabels(wxArrayString *label, size_t numLabel, int start, int step)
-{
-   mNumMajor = numLabel;
-   mMajorLabels.reinit(numLabel);
-
-   for(size_t i = 0; i<numLabel; i++) {
-      mMajorLabels[i].text = label->Item(i);
-      mMajorLabels[i].pos  = start + i*step;
-   }
-   //Remember: DELETE majorlabels....
-}
-
-void Ruler::SetCustomMinorLabels(wxArrayString *label, size_t numLabel, int start, int step)
-{
-   mNumMinor = numLabel;
-   mMinorLabels.reinit(numLabel);
-
-   for(size_t i = 0; i<numLabel; i++) {
-      mMinorLabels[i].text = label->Item(i);
-      mMinorLabels[i].pos  = start + i*step;
-   }
-   //Remember: DELETE majorlabels....
 }
 
 void Ruler::Label::Draw(wxDC&dc, bool twoTone, wxColour c) const

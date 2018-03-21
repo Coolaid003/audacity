@@ -20,6 +20,7 @@
 #include <wx/font.h>
 #include <wx/window.h>
 #include "../Experimental.h"
+#include <vector>
 
 class ViewInfo;
 class AudacityProject;
@@ -85,6 +86,9 @@ class AUDACITY_DLL_API Ruler {
    // Logarithmic
    void SetLog(bool log);
 
+   // Set custom ticks
+   void CustomTicks(const std::vector<double>& values, const wxArrayString& labels, bool major, bool minor);
+
    // Minimum number of pixels between labels
    void SetSpacing(int spacing);
 
@@ -120,18 +124,6 @@ class AUDACITY_DLL_API Ruler {
    //
    void GetMaxSize(wxCoord *width, wxCoord *height);
 
-
-   // The following functions should allow a custom ruler setup:
-   // autosize is a GREAT thing, but for some applications it's
-   // useful the definition of a label array and label step by
-   // the user.
-   void SetCustomMode(bool value);
-   // If this is the case, you should provide a wxString array of labels, start
-   // label position, and labels step. The range eventually specified will be
-   // ignored.
-   void SetCustomMajorLabels(wxArrayString *label, size_t numLabel, int start, int step);
-   void SetCustomMinorLabels(wxArrayString *label, size_t numLabel, int start, int step);
-
    void SetUseZoomInfo(int leftOffset, const ZoomInfo *zoomInfo);
 
    //
@@ -160,10 +152,10 @@ class AUDACITY_DLL_API Ruler {
    void FindLinearTickSizes(double UPP);
    wxString LabelString(double d, bool major);
 
+   void TickWithLabel(int pos, const wxString& l, double d, bool major, bool minor);
    void Tick(int pos, double d, bool major, bool minor);
 
-   // Another tick generator for custom ruler case (noauto) .
-   void TickCustom(int labelIdx, bool major, bool minor);
+   void UpdateCustomTicks(const std::vector<double>& customValues, const wxArrayString& customLabels, double min, double max, const NumberScale& numberScale, bool major, bool minor);
 
 public:
    bool mbTicksOnly; // true => no line the length of the ruler
@@ -228,7 +220,6 @@ private:
    RulerFormat  mFormat;
    bool         mLog;
    bool         mFlip;
-   bool         mCustom;
    bool         mbMinor;
    bool         mMajorGrid;      //  for grid drawing
    bool         mMinorGrid;      //         .
@@ -237,6 +228,13 @@ private:
    bool         mTwoTone;
    const ZoomInfo *mUseZoomInfo;
    int          mLeftOffset;
+
+   std::vector<double> mCustomMajorTicksValues;
+   wxArrayString       mCustomMajorTicksLabels;
+   std::vector<double> mCustomMinorTicksValues;
+   wxArrayString       mCustomMinorTicksLabels;
+   std::vector<double> mCustomMinorMinorTicksValues;
+   wxArrayString       mCustomMinorMinorTicksLabels;
 
    std::unique_ptr<NumberScale> mpNumberScale;
 };

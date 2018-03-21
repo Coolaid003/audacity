@@ -64,8 +64,15 @@ public:
 
       stNumScaleTypes,
    };
+   enum FreqLabelType {
+       fltHertz,
+       fltNotesEqualTemperament,
+
+       fltNumFreqLabelTypes,
+   };
 
    static const wxArrayString &GetScaleNames();
+   static const wxArrayString &GetFreqLabelNames();
    static const wxArrayString &GetAlgorithmNames();
 
    static SpectrogramSettings &defaults();
@@ -127,6 +134,8 @@ public:
    bool isGrayscale;
 
    ScaleType scaleType;
+   FreqLabelType freqLabelType;
+   double ticksTuningFreq;
 
 #ifndef SPECTRAL_SELECTION_GLOBAL_SWITCH
    bool spectralSelection; // But should this vary per track? -- PRL
