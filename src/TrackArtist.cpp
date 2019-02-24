@@ -85,6 +85,8 @@ audio tracks.
 #include "AllThemeResources.h"
 #include "Experimental.h"
 #include "TrackPanelDrawingContext.h"
+#include "PitchName.h"
+#include "Clamp.h"
 
 
 #undef PROFILE_WAVEFORM
@@ -163,6 +165,84 @@ int TrackArt::GetBottom(NoteTrack *t, const wxRect &rect)
 }
 */
 #endif // USE_MIDI
+
+// Adds the freqency and name of the MIDI note midiNote to the vectors ticks
+// and tickLabels, respectively.
+static void AddNoteToTicks(std::vector<double> * ticks,
+                           wxArrayString * tickLabels,
+                           int midiNote,
+                           double tuningFreq,
+                           bool addHz)
+{
+    if(!ticks)
+        return;
+    if(!tickLabels)
+        return;
+    const double freq = MIDInoteToFreqWithTuning(midiNote, tuningFreq);
+    if(addHz)
+    {
+        wxString freqText;
+        freqText.Printf(wxT("(%.1fHz) "), freq);
+        tickLabels->Add(freqText + PitchName(midiNote, PitchNameChoice::Both));
+    }
+    else
+    {
+        tickLabels->Add(PitchName(midiNote, PitchNameChoice::Both));
+    }
+    ticks->push_back(freq);
+}
+
+// Set custom ticks and labels for note pitches to the Ruler of the Spectrogram
+static void SetNotesCustomTicks(Ruler * vruler, double tuningFreq)
+{
+    if(!vruler)
+        return;
+
+    std::vector<double> majorTicks;
+    wxArrayString majorTickLabels;
+    // major ticks are C and A notes
+    for(int i=0; i<=108; i+=12)
+    {
+        AddNoteToTicks(&majorTicks, &majorTickLabels, i  , tuningFreq, true);
+        AddNoteToTicks(&majorTicks, &majorTickLabels, i+9, tuningFreq, true);
+    }
+    AddNoteToTicks(&majorTicks, &majorTickLabels, 120, tuningFreq, true);
+
+    std::vector<double> minorTicks;
+    wxArrayString minorTickLabels;
+    // minor ticks are all remaining white keys
+    for(int i=0; i<=108; i+=12)
+    {
+        AddNoteToTicks(&minorTicks, &minorTickLabels, i+ 2, tuningFreq, false);
+        AddNoteToTicks(&minorTicks, &minorTickLabels, i+ 4, tuningFreq, false);
+        AddNoteToTicks(&minorTicks, &minorTickLabels, i+ 5, tuningFreq, false);
+        AddNoteToTicks(&minorTicks, &minorTickLabels, i+ 7, tuningFreq, false);
+        AddNoteToTicks(&minorTicks, &minorTickLabels, i+11, tuningFreq, false);
+    }
+    AddNoteToTicks(&minorTicks, &minorTickLabels, 122, tuningFreq, false);
+    AddNoteToTicks(&minorTicks, &minorTickLabels, 124, tuningFreq, false);
+    AddNoteToTicks(&minorTicks, &minorTickLabels, 125, tuningFreq, false);
+    AddNoteToTicks(&minorTicks, &minorTickLabels, 127, tuningFreq, false);
+
+    std::vector<double> minorMinorTicks;
+    wxArrayString minorMinorTickLabels;
+    // minor minor ticks are all black keys
+    for(int i=0; i<=108; i+=12)
+    {
+        AddNoteToTicks(&minorMinorTicks, &minorMinorTickLabels, i+ 1, tuningFreq, false);
+        AddNoteToTicks(&minorMinorTicks, &minorMinorTickLabels, i+ 3, tuningFreq, false);
+        AddNoteToTicks(&minorMinorTicks, &minorMinorTickLabels, i+ 6, tuningFreq, false);
+        AddNoteToTicks(&minorMinorTicks, &minorMinorTickLabels, i+ 8, tuningFreq, false);
+        AddNoteToTicks(&minorMinorTicks, &minorMinorTickLabels, i+10, tuningFreq, false);
+    }
+    AddNoteToTicks(&minorMinorTicks, &minorMinorTickLabels, 121, tuningFreq, false);
+    AddNoteToTicks(&minorMinorTicks, &minorMinorTickLabels, 123, tuningFreq, false);
+    AddNoteToTicks(&minorMinorTicks, &minorMinorTickLabels, 126, tuningFreq, false);
+
+    vruler->CustomTicks(majorTicks, majorTickLabels, true, false);
+    vruler->CustomTicks(minorTicks, minorTickLabels, false, true);
+    vruler->CustomTicks(minorMinorTicks, minorMinorTickLabels, false, false);
+}
 
 TrackArtist::TrackArtist( TrackPanel *parent_ )
    : parent( parent_ )
@@ -545,6 +625,7 @@ void TrackArt::DrawVRuler
 
 void TrackArtist::UpdateVRuler(const Track *t, const wxRect & rect)
 {
+
    auto update = t->TypeSwitch<bool>(
       [] (const LabelTrack *) {
       // Label tracks do not have a vruler
@@ -578,7 +659,6 @@ void TrackArtist::UpdateVRuler(const Track *t, const wxRect & rect)
          if (display == WaveTrack::Waveform) {
             WaveformSettings::ScaleType scaleType =
                wt->GetWaveformSettings().scaleType;
-
             if (scaleType == WaveformSettings::stLinear) {
                // Waveform
 
@@ -763,6 +843,9 @@ void TrackArtist::UpdateVRuler(const Track *t, const wxRect & rect)
                   vruler->SetUnits(wxT(""));
                }
                vruler->SetLog(false);
+               if(wt->GetSpectrogramSettings().freqLabelType
+                  == SpectrogramSettings::fltNotesEqualTemperament)
+                SetNotesCustomTicks(vruler.get(), wt->GetSpectrogramSettings().ticksTuningFreq);
             }
             break;
             case SpectrogramSettings::stLogarithmic:
@@ -792,9 +875,14 @@ void TrackArtist::UpdateVRuler(const Track *t, const wxRect & rect)
                   wt->GetSpectrogramSettings().GetScale( minFreq, maxFreq )
                      .Reversal() );
                vruler->SetNumberScale(&scale);
+               if(wt->GetSpectrogramSettings().freqLabelType
+                  == SpectrogramSettings::fltNotesEqualTemperament)
+                SetNotesCustomTicks(vruler.get(), wt->GetSpectrogramSettings().ticksTuningFreq);
             }
             break;
             }
+
+                
          }
          return true;
       }
@@ -2212,14 +2300,12 @@ void TrackArt::DrawClipSpectrum(TrackPanelDrawingContext &context,
       const NumberScale numberScale( settings.GetScale( minFreq, maxFreq ) );
 
       NumberScale::Iterator it = numberScale.begin(mid.height);
-      float nextBin = std::max( 0.0f, std::min( float(nBins - 1),
-         settings.findBin( *it, binUnit ) ) );
+      float nextBin = Clamp(settings.findBin(*it, binUnit), 0.0f, float(nBins - 1));
 
       int yy;
       for (yy = 0; yy < hiddenMid.height; ++yy) {
          bins[yy] = nextBin;
-         nextBin = std::max( 0.0f, std::min( float(nBins - 1),
-            settings.findBin( *++it, binUnit ) ) );
+         nextBin = Clamp(settings.findBin( *++it, binUnit), 0.0f, float(nBins - 1));
       }
       bins[yy] = nextBin;
    }
