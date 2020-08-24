@@ -43,12 +43,15 @@ ProjectHistory::~ProjectHistory() = default;
 void ProjectHistory::InitialState()
 {
    auto &project = mProject;
+   auto &projectFileIO = ProjectFileIO::Get( project );
    auto &tracks = TrackList::Get( project );
    auto &viewInfo = ViewInfo::Get( project );
    auto &undoManager = UndoManager::Get( project );
    auto &tags = Tags::Get( project );
 
    undoManager.ClearStates();
+
+   projectFileIO.TransactionStart({});
 
    undoManager.PushState(
       &tracks, viewInfo.selectedRegion, tags.shared_from_this(),

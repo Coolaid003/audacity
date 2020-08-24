@@ -23,11 +23,13 @@ UndoManager
 #include "Audacity.h"
 #include "UndoManager.h"
 
+#include <algorithm>
 #include <wx/hashset.h>
 
 #include "Clipboard.h"
 #include "Diags.h"
 #include "Project.h"
+#include "ProjectFileIO.h"
 #include "SampleBlock.h"
 #include "Sequence.h"
 #include "WaveClip.h"
@@ -88,7 +90,6 @@ UndoManager::UndoManager( AudacityProject &project )
 
 UndoManager::~UndoManager()
 {
-   ClearStates();
 }
 
 namespace {
@@ -178,9 +179,45 @@ void UndoManager::RemoveStateAt(int n)
    stack.erase(stack.begin() + n);
 }
 
-
-void UndoManager::RemoveStates(int num)
+void UndoManager::DeleteBlocksExcept(
+   UndoStack::const_iterator begin,
+   UndoStack::const_iterator end )
 {
+   auto &projectFileIO = ProjectFileIO::Get(mProject);
+
+   // Collect ids that must not be deleted
+   SampleBlockIDSet ids;
+   std::for_each( begin, end, [&ids](const auto &pElem){
+      const auto &tracks = *pElem->state.tracks;
+      InspectBlocks(tracks, {}, &ids);
+   });
+
+   // Delete all others
+   bool ok = projectFileIO.DeleteBlocks(ids, true);
+   if ( !ok ) {
+      // Ignore the database error.  At worst, we make orphans.
+   }
+}
+
+void UndoManager::RemoveNewStates( int num )
+{
+   const auto begin = stack.begin(), end = begin + num;
+   DeleteBlocksExcept( begin, end );
+
+   // Destroy the tracks (which should dereference SampleBlocks that were
+   // deleted from the database)
+   while (num < stack.size()) {
+      RemoveStateAt(num);
+   }
+}
+
+void UndoManager::RemoveOldStates(int num)
+{
+   const auto begin = stack.begin() + num, end = stack.end();
+   DeleteBlocksExcept( begin, end );
+
+   // Destroy the tracks (which should dereference SampleBlocks that were
+   // deleted from the database)
    for (int i = 0; i < num; i++) {
       RemoveStateAt(0);
 
@@ -191,7 +228,7 @@ void UndoManager::RemoveStates(int num)
 
 void UndoManager::ClearStates()
 {
-   RemoveStates(stack.size());
+   RemoveOldStates(stack.size());
    current = -1;
    saved = -1;
 }
@@ -280,10 +317,7 @@ void UndoManager::PushState(const TrackList * l,
 
    mayConsolidate = true;
 
-   i = current + 1;
-   while (i < stack.size()) {
-      RemoveStateAt(i);
-   }
+   RemoveNewStates( current + 1 );
 
    // Assume tags was duplicated before any changes.
    // Just save a NEW shared_ptr to it.

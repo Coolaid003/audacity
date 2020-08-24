@@ -654,6 +654,8 @@ static CommandHandlerObject &findCommandHandler(AudacityProject &) {
 
 // Menu definitions
 
+#define EXPERIMENTAL_RESET
+
 #define FN(X) (& FileActions::Handler :: X)
 
 namespace {
