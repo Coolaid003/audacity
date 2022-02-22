@@ -86,6 +86,8 @@ ToolFrame::ToolFrame
           wxFRAME_FLOAT_ON_PARENT )
    , mParent{ parent }
 {
+   SetName( bar->GetName() ); // For journalling
+   
    int width = bar->GetSize().x;
    int border = 1;
 
@@ -440,8 +442,13 @@ void ToolManager::CreateWindows()
    wxASSERT(topDockParent);
 
    // Create the top and bottom docks
-   mTopDock = safenew ToolDock( this, topDockParent, TopDockID );
-   mBotDock = safenew ToolDock( this, &window, BotDockID );
+   // Distinguish their names for reasons of journalling
+   // i18n-hint A graphical window area that tool bars can be dragged onto
+   mTopDock = safenew ToolDock( XO("Upper Tool Dock"),
+      this, topDockParent, TopDockID );
+   // i18n-hint A graphical window area that tool bars can be dragged onto
+   mBotDock = safenew ToolDock( XO("Lower Tool Dock"),
+      this, &window, BotDockID );
 
    // Create all of the toolbars
    // All have the project as parent window

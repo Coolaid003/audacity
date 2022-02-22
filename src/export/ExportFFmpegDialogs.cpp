@@ -195,9 +195,13 @@ const std::vector< int > AC3BitRateValues{
 
 const int ExportFFmpegAC3Options::iAC3SampleRates[] = { 32000, 44100, 48000, 0 };
 
-ExportFFmpegAC3Options::ExportFFmpegAC3Options(wxWindow *parent, int WXUNUSED(format))
+ExportFFmpegAC3Options::ExportFFmpegAC3Options(
+   wxWindow *parent, int WXUNUSED(format),
+   const TranslatableString &description)
 :  wxPanelWrapper(parent, wxID_ANY)
 {
+   SetName(description);
+
    ShuttleGui S(this, eIsCreatingFromPrefs);
    PopulateOrExchange(S);
 
@@ -257,9 +261,13 @@ bool ExportFFmpegAC3Options::TransferDataFromWindow()
 // ExportFFmpegAACOptions Class
 //----------------------------------------------------------------------------
 
-ExportFFmpegAACOptions::ExportFFmpegAACOptions(wxWindow *parent, int WXUNUSED(format))
+ExportFFmpegAACOptions::ExportFFmpegAACOptions(
+   wxWindow *parent, int WXUNUSED(format),
+   const TranslatableString &description)
 :  wxPanelWrapper(parent, wxID_ANY)
 {
+   SetName(description);
+
    ShuttleGui S(this, eIsCreatingFromPrefs);
    PopulateOrExchange(S);
 
@@ -350,9 +358,13 @@ const std::vector< int > AMRNBBitRateValues
 
 }
 
-ExportFFmpegAMRNBOptions::ExportFFmpegAMRNBOptions(wxWindow *parent, int WXUNUSED(format))
+ExportFFmpegAMRNBOptions::ExportFFmpegAMRNBOptions(
+   wxWindow *parent, int WXUNUSED(format),
+   const TranslatableString &description)
 :  wxPanelWrapper(parent, wxID_ANY)
 {
+   SetName(description);
+
    ShuttleGui S(this, eIsCreatingFromPrefs);
    PopulateOrExchange(S);
 
@@ -581,9 +593,13 @@ namespace {
    };
 }
 
-ExportFFmpegOPUSOptions::ExportFFmpegOPUSOptions(wxWindow *parent, int WXUNUSED(format))
+ExportFFmpegOPUSOptions::ExportFFmpegOPUSOptions(
+   wxWindow *parent, int WXUNUSED(format),
+   const TranslatableString &description)
 :  wxPanelWrapper(parent, wxID_ANY)
 {
+   SetName(description);
+
    ShuttleGui S(this, eIsCreatingFromPrefs);
    PopulateOrExchange(S);
 
@@ -709,9 +725,13 @@ const std::vector< int > WMABitRateValues{
 
 }
 
-ExportFFmpegWMAOptions::ExportFFmpegWMAOptions(wxWindow *parent, int WXUNUSED(format))
+ExportFFmpegWMAOptions::ExportFFmpegWMAOptions(
+   wxWindow *parent, int WXUNUSED(format),
+   const TranslatableString &description)
 :  wxPanelWrapper(parent, wxID_ANY)
 {
+   SetName(description);
+
    ShuttleGui S(this, eIsCreatingFromPrefs);
    PopulateOrExchange(S);
 
@@ -777,11 +797,15 @@ BEGIN_EVENT_TABLE(ExportFFmpegCustomOptions, wxPanelWrapper)
    EVT_BUTTON(OpenID, ExportFFmpegCustomOptions::OnOpen)
 END_EVENT_TABLE()
 
-ExportFFmpegCustomOptions::ExportFFmpegCustomOptions(wxWindow *parent, int WXUNUSED(format))
+ExportFFmpegCustomOptions::ExportFFmpegCustomOptions(
+   wxWindow *parent, int WXUNUSED(format),
+   const TranslatableString &description)
 :  wxPanelWrapper(parent, wxID_ANY),
    mFormat(NULL),
    mCodec(NULL)
 {
+   SetName(description);
+
    ShuttleGui S(this, eIsCreatingFromPrefs);
    PopulateOrExchange(S);
 
@@ -804,10 +828,10 @@ void ExportFFmpegCustomOptions::PopulateOrExchange(ShuttleGui & S)
          S.Id(OpenID).AddButton(XXO("Open custom FFmpeg format options"));
          S.StartMultiColumn(2, wxCENTER);
          {
-            S.AddPrompt(XXO("Current Format:"));
-            mFormat = S.Style(wxTE_READONLY).AddTextBox({}, wxT(""), 25);
-            S.AddPrompt(XXO("Current Codec:"));
-            mCodec = S.Style(wxTE_READONLY).AddTextBox({}, wxT(""), 25);
+            mFormat = S.Style(wxTE_READONLY)
+               .AddTextBox(XXO("Current Format:"), wxT(""), 25);
+            mCodec = S.Style(wxTE_READONLY)
+               .AddTextBox(XXO("Current Codec:"), wxT(""), 25);
          }
          S.EndMultiColumn();
       }

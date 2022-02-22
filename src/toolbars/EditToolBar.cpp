@@ -19,7 +19,7 @@
   window containing interfaces to commonly-used edit
   functions that are otherwise only available through
   menus. The window can be embedded within a normal project
-  window, or within a ToolBarFrame.
+  window, or within a ToolFrame.
 
   All of the controls in this window were custom-written for
   Audacity - they are not native controls on any platform -
@@ -112,11 +112,10 @@ AButton *EditToolBar::AddButton(
       bmpRecoloredUpSmall, bmpRecoloredDownSmall, bmpRecoloredUpHiliteSmall, bmpRecoloredHiliteSmall,
       eEnabledUp, eEnabledDown, eDisabled,
       wxWindowID(id+first_ETB_ID),
-      wxDefaultPosition,
+      wxDefaultPosition, label,
       toggle,
       theTheme.ImageSize( bmpRecoloredUpSmall ));
 
-   r->SetLabel(label);
 // JKC: Unlike ControlToolBar, does not have a focus rect.  Shouldn't it?
 // r->SetFocusRect( r->GetRect().Deflate( 4, 4 ) );
 

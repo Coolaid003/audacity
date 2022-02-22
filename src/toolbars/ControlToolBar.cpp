@@ -20,7 +20,7 @@
   This class, which is a child of Toolbar, creates the
   window containing the Transport (rewind/play/stop/record/ff)
   buttons. The window can be embedded within a
-  normal project window, or within a ToolBarFrame.
+  normal project window, or within a ToolFrame.
 
   All of the controls in this window were custom-written for
   Audacity - they are not native controls on any platform -
@@ -162,9 +162,8 @@ AButton *ControlToolBar::MakeButton(ControlToolBar *pBar,
       bmpRecoloredUpLarge, bmpRecoloredDownLarge, bmpRecoloredUpHiliteLarge, bmpRecoloredHiliteLarge,
       eEnabledUp, eEnabledDown, eDisabled,
       wxWindowID(id),
-      wxDefaultPosition, processdownevents,
+      wxDefaultPosition, label, processdownevents,
       theTheme.ImageSize( bmpRecoloredUpLarge ));
-   r->SetLabel(label);
    enum { deflation =
 #ifdef __WXMAC__
       6
