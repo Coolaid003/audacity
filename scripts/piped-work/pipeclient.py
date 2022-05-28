@@ -75,6 +75,9 @@ import threading
 import time
 import errno
 import argparse
+import json
+from functools import partial
+from string import Template
 
 
 if sys.version_info[0] < 3 and sys.version_info[1] < 7:
@@ -250,6 +253,236 @@ def bool_from_string(strval):
     raise argparse.ArgumentTypeError('Boolean value expected.')
 
 
+class PipeTerminal():
+    """
+    ===============================
+    PipeClient Interactive Terminal
+    ===============================
+
+    Command General Form:
+    {Command Name}: {param1key}="{Value1}" {param2key}="{Value2}" ...
+
+    Terminal built-in commands:
+        'H' : view usage help message
+        'C' : view 'Commands' list
+        'M' : view 'Menus' list
+        'Q' : exit program
+
+    (Built-in view commands also provide the option to view individual
+    usage requirements)
+
+    A full detailed list of scripting commands and parameters can be found at:
+
+    https://manual.audacityteam.org/man/scripting_reference.html
+    """
+
+    def __init__(self, timeout=10, show=True):
+        """Initialize PipeClient Terminal"""
+        self.timeout = timeout
+        self.show = show
+        self.client = PipeClient()
+        self._builtIn = {"C": partial(self.view_commands, "Commands"),
+                         "M": partial(self.view_commands, "Menus"),
+                         "H": self.help,
+                         "Q": self.quit}
+
+    def start(self):
+        """
+        ==========================
+        Using PipeClient Terminal:
+        ==========================
+        Prompts user for Audacity Scripting commands
+
+        To send a command, provide the scripting id {command name}.
+        Commands sent without parameters use default values set in Audacity.
+
+        To include custom parameters, follow scripting id with a colon ':',
+        then spacing each parameter key/value in the following form
+        {key="Value"} with quotes around the value, not key.
+
+        Command General Form:
+        {Command Name}: {param1key}="{Value1}" {param2key}="{Value2}" ...
+
+        Note: Quotes around values must be double.
+        Note: Key values are case-sensitive, commands and keys are not.
+
+        Example
+        -------
+        > Help
+
+        This example sends the 'Help' scripting command using
+        defaults (Command="Help" Format="JSON").
+
+
+        > Help: Command="Amplify" Format="Brief"
+
+        This example sends the 'Help' scipting command for the
+        command 'Amplify', returning it in "Brief" format.
+        """
+        print(self.__doc__)
+        prompt = ("\nEnter Command "
+                  "('H': Help, "
+                  "'C': Command List, "
+                  "'M': Menu List, "
+                  "'Q': Quit):\n> ")
+        while True:
+            # check if python version
+            if sys.version_info[0] < 3:
+                message = input(prompt)
+            else:
+                message = input(prompt)
+            # check if user input is a built-in command
+            if message.upper() in self._builtIn:
+                reply = self._builtIn[message.upper()]()
+            else:
+                reply = self.get_reply(message)
+            # if reply returned, print reply
+            if reply is not None:
+                print(reply)
+
+    def view_commands(self, category):
+        """
+        =====================
+        Usability assistance:
+        =====================
+        In Addition to Audacity scripting commands, the terminal includes
+        built-in commands to view list of possible commands by category.
+
+        The built-in view commands aim to provide easier access to essential
+        information needed to use this terminal with greater confidence.
+
+        View options are intended for readability for new users exploring the
+        commands available through the mod-script-pipe.
+
+        Example:
+        --------
+        'Menus': returns information of menu script commands
+        (Terminal shortcut-command 'M')
+
+        'Commands': returns information of command script commands
+        (Terminal shortcut-command 'C')
+
+
+        Returning a list of scripting commands by category
+        Prompts user to optionally enter a command for additional
+        usage information.
+        """
+        message = 'GetInfo: Type="{type}" Format="JSON"'.format(type=category)
+        reply = self.get_reply(message)
+        return self.command_helper(reply, message)
+
+    def get_reply(self, message):
+        """return reply string from PipeClient"""
+        reply = ''
+        start = time.time()
+        self.client.write(message, timer=self.show)
+        while reply == '':
+            time.sleep(0.1)  # allow time for reply
+            if time.time() - start > self.timeout:
+                reply = 'PipeClient: Reply timed-out.'
+            else:
+                reply = self.client.read()
+        return reply
+
+    def command_helper(self, reply, message):
+        """
+        Formats the pipeclient reply of available scripting commands,
+        printing them in readable format.
+
+        Prompts user with the option to view additional usability
+        information for provided command.
+        """
+        # check if message beginning indicates JSON
+        if reply[0] != "[" and reply[0] != "{":
+            return reply
+        # clean string for JSON conversion
+        reply = reply.replace('\n', '')
+        reply = reply.replace('\\', '/')
+        reply = reply.replace('/"', "'")
+        runtime = ''
+        # save run time if requested
+        if reply.find('BatchCommand finished:') != -1:
+            index = reply.find('BatchCommand finished:')
+            runtime = reply[index:]
+            reply = reply.replace(runtime, '')
+        if reply.find('Execution time:') != -1:
+            print(reply)
+            return
+        # convert to json for processing information
+        commands = json.loads(reply)
+        reply = runtime + '\n\n'
+        # arrange commands to be read in column form
+        command_ids = []
+        for command in commands:
+            if "id" in command:
+                command_ids.append(command["id"])
+        command_ids.sort()
+        row = []
+        for command in command_ids:
+            row.append(command)
+            if len(row) == 2:
+                reply += str('{:<40s}{:<40s}\n'.format(row[0], row[1]))
+                row = []
+        print(reply)
+        # prompt user for lookup info for command usage,
+        # Empty string or a no match performs no lookup
+        command_id = input("Lookup a particular command: ")
+        for command in commands:
+            if "id" in command:
+                if command["id"].upper() == command_id.upper():
+                    return self.command_info(command)
+        # no command was found in command list
+        return "No command lookup performed"
+
+    def command_info(self, command):
+        """Returns lookup info for particular command"""
+        # Parse together command info depending on type of command
+        if "name" in command:
+            name = 'Name: ' + command["name"]
+        else:
+            name = 'Label: ' + command["label"]
+        info = command["tip"] if 'tip' in command else ''
+        accel = "depth" + command["accel"] if 'accel' in command else ''
+        depth = str(command["depth"]) if 'depth' in command else ''
+        flags = str(command["flags"]) if 'flags' in command else ''
+        id = command["id"] if 'id' in command else ''
+        if "params" in command:
+            usage = f'{id}:'
+            params = "\n\nParameters:\n"
+            for param in command["params"]:
+                key = param["key"]
+                type = param["type"]
+                default = str(param["default"])
+                enum = str(param["enum"] if param["type"] == 'enum' else '')
+                usage += f' {key}="{type}"'
+                params += f'{key} - Default({default}){enum}\n'
+        else:
+            usage = '{id}'
+            params = "\n\nParameters: None"
+        # set up format of command information
+        reply = f'==================================\n' \
+                f'Command {name}\n' \
+                f'{info}\n' \
+                f'Audacity shortkey: {accel}\n' \
+                f'{depth} {flags}\n\n' \
+                f'To Use:\n> {usage}' \
+                f'{params}'
+        return reply
+
+    def help(self):
+        """
+        Prints docstrings from methods to explain usability
+        """
+        print("PipeClient Terminal 'Help' Command:")
+        print(self.__doc__)
+        print(self.start.__doc__)
+        print(self.view_commands.__doc__)
+
+    def quit(self):
+        """Quit pipeclient terminal"""
+        sys.exit(0)
+
+
 def main():
     """Interactive command-line for PipeClient"""
 
@@ -268,27 +501,8 @@ def main():
         print(__doc__)
         sys.exit(0)
 
-    client = PipeClient()
-    while True:
-        reply = ''
-        if sys.version_info[0] < 3:
-            message = raw_input("\nEnter command or 'Q' to quit: ")
-        else:
-            message = input("\nEnter command or 'Q' to quit: ")
-        start = time.time()
-        if message.upper() == 'Q':
-            sys.exit(0)
-        elif message == '':
-            pass
-        else:
-            client.write(message, timer=args.show)
-            while reply == '':
-                time.sleep(0.1)  # allow time for reply
-                if time.time() - start > args.timeout:
-                    reply = 'PipeClient: Reply timed-out.'
-                else:
-                    reply = client.read()
-            print(reply)
+    terminal = PipeTerminal(args.timeout, args.show)
+    terminal.start()
 
 
 if __name__ == '__main__':
