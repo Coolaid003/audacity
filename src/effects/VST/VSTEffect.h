@@ -1,6 +1,6 @@
 /**********************************************************************
 
-  Audacity: A Digital Audio Editor
+  Audacity: A Digital Audio Editor 
 
   VSTEffect.h
 
@@ -20,6 +20,9 @@
 #include "SampleFormat.h"
 #include "XMLTagHandler.h"
 #include <wx/weakref.h>
+
+#include <unordered_map>
+#include <optional>
 
 class wxSizerItem;
 class wxSlider;
@@ -73,6 +76,138 @@ typedef SInt16 CFBundleRefNum;
 #endif
 #endif
 
+struct VSTEffectSettings, public XMLTagHandler
+{
+   // These are saved in the Config and checked against when loading a preset, to make sure
+   // that we are loading a Config  which is compatible.
+   //
+   int32_t mUniqueID;
+   int32_t mVersion;
+   int32_t mNumParams;
+
+   // When loading a preset, the preferred way is to use the chunk; when not present in
+   // the Config or failing to load, we fall back to loading single parameters (ID, value) pairs.
+   //
+   // It looks like a plugin might not support this (if their effFlagsProgramChunks bit is off)
+   // this is why it is made optional.
+   //
+   std::optional<wxString> mChunk;
+
+   // Fallback data used when the chunk is not available.
+   std::unordered_map<wxString, double> mParamsMap;
+};
+
+struct VSTEffectWrapper : public VSTEffectLink, public XMLTagHandler
+{
+   AEffect* mAEffect = nullptr;
+
+   intptr_t callDispatcher(int opcode, int index,
+      intptr_t value, void* ptr, float opt) override;
+
+   intptr_t constCallDispatcher(int opcode, int index,
+      intptr_t value, void* ptr, float opt) const;
+
+   wxCRIT_SECT_DECLARE_MEMBER(mDispatcherLock);
+
+   float callGetParameter(int index) const;
+
+   void callSetChunkB(bool isPgm, int len, void* buf);
+   void callSetChunkB(bool isPgm, int len, void* buf, VstPatchChunkInfo* info) const;
+
+   int      GetString(wxString& outstr, int opcode, int index = 0) const;
+   wxString GetString(int opcode, int index = 0) const;
+
+   struct ParameterInfo
+   {
+      int      mID;
+      wxString mName;      
+   };
+
+   //! @return true  continue visiting
+   //! @return false stop     visiting
+   using ParameterVisitor = std::function< bool(const ParameterInfo& pi) >;
+
+   void ForEachParameter(ParameterVisitor visitor) const;
+
+   bool FetchSettings(VSTEffectSettings& vst3Settings) const;
+
+   bool StoreSettings(const VSTEffectSettings& vst3settings) const;
+
+   VstPatchChunkInfo GetChunkInfo() const;
+
+   bool IsCompatible(const VstPatchChunkInfo&) const;
+
+   bool SupportsChunk() const;
+
+   VSTEffectSettings mSettings;  // temporary, until the effect is really stateless
+
+   //! This function will be rewritten when the effect is really stateless
+   VSTEffectSettings& GetSettings(EffectSettings&) const
+   {
+      return const_cast<VSTEffectWrapper*>(this)->mSettings;
+   }
+
+   //! This function will be rewritten when the effect is really stateless
+   const VSTEffectSettings& GetSettings(const EffectSettings&) const
+   {
+      return mSettings;
+   }
+
+   //! This is what ::GetSettings will be when the effect becomes really stateless
+   /*
+   static inline VST3EffectSettings& GetSettings(EffectSettings& settings)
+   {
+      auto pSettings = settings.cast<VST3EffectSettings>();
+      assert(pSettings);
+      return *pSettings;
+   }
+   */
+
+   // XML part
+   bool LoadXML(const wxFileName& fn);
+
+   bool HandleXMLTag(const std::string_view& tag, const AttributesList& attrs) override;
+   void HandleXMLEndTag(const std::string_view& tag) override;
+   void HandleXMLContent(const std::string_view& content) override;
+   XMLTagHandler* HandleXMLChild(const std::string_view& tag) override;
+
+   bool mInSet;
+   bool mInChunk;
+   wxString mChunk;
+   long mXMLVersion;
+   VstPatchChunkInfo mXMLInfo;
+
+   void SetString(int opcode, const wxString& str, int index = 0);
+
+   wxString mName;
+   ComponentInterfaceSymbol GetSymbolB() const
+   {
+      return mName;
+   }
+
+   wxWindow* mParent;
+
+   void callSetParameterB(int index, float value);
+
+   int mVstVersion;
+
+   // Program/Bank loading/saving
+   bool LoadFXB(const wxFileName& fn);
+   bool LoadFXP(const wxFileName& fn);
+
+   bool LoadFXProgram(unsigned char** bptr, ssize_t& len, int index, bool dryrun);
+
+   void callSetProgramB(int index);
+
+   void SaveXML(const wxFileName& fn) const;
+   void SaveFXB(const wxFileName& fn) const;
+   void SaveFXP(const wxFileName & fn) const;
+
+   void SaveFXProgram(wxMemoryBuffer& buf, int index) const;
+};
+
+
+
 ///////////////////////////////////////////////////////////////////////////////
 //
 // VSTEffect
@@ -92,8 +227,8 @@ DECLARE_LOCAL_EVENT_TYPE(EVT_UPDATEDISPLAY, -1);
 ///////////////////////////////////////////////////////////////////////////////
 class VSTEffect final
    : public StatefulPerTrackEffect
-   , public XMLTagHandler
-   , public VSTEffectLink
+   , public VSTEffectWrapper
+      
 {
  public:
    VSTEffect(const PluginPath & path, VSTEffect *master = NULL);
@@ -169,6 +304,8 @@ class VSTEffect final
 
    bool InitializePlugin();
 
+   bool TransferDataToWindow(const EffectSettings& settings) override;
+
    // EffectUIClientInterface implementation
 
    std::shared_ptr<EffectInstance> MakeInstance() const override;
@@ -198,6 +335,8 @@ class VSTEffect final
                                float opt);
 
    void OnTimer();
+
+   EffectSettings MakeSettings() const override;
 
 private:
    // Plugin loading and unloading
@@ -232,20 +371,6 @@ private:
    wxSizer *BuildProgramBar();
    void RefreshParameters(int skip = -1);
 
-   // Program/Bank loading/saving
-   bool LoadFXB(const wxFileName & fn);
-   bool LoadFXP(const wxFileName & fn);
-   bool LoadXML(const wxFileName & fn);
-   bool LoadFXProgram(unsigned char **bptr, ssize_t & len, int index, bool dryrun);
-   void SaveFXB(const wxFileName & fn) const;
-   void SaveFXP(const wxFileName & fn) const;
-   void SaveXML(const wxFileName & fn) const;
-   void SaveFXProgram(wxMemoryBuffer & buf, int index) const;
-
-   bool HandleXMLTag(const std::string_view& tag, const AttributesList &attrs) override;
-   void HandleXMLEndTag(const std::string_view& tag) override;
-   void HandleXMLContent(const std::string_view& content) override;
-   XMLTagHandler *HandleXMLChild(const std::string_view& tag) override;
 
    // Utility methods
 
@@ -260,21 +385,16 @@ private:
    void Automate(int index, float value);
    void PowerOn();
    void PowerOff();
-
-   int GetString(wxString & outstr, int opcode, int index = 0) const;
-   wxString GetString(int opcode, int index = 0) const;
-   void SetString(int opcode, const wxString & str, int index = 0);
+      
+   
+   
 
    // VST methods
 
-   intptr_t callDispatcher(int opcode, int index,
-                           intptr_t value, void *ptr, float opt) override;
-   intptr_t constCallDispatcher(int opcode, int index,
-                           intptr_t value, void *ptr, float opt) const;
+   
    void callProcessReplacing(
       const float *const *inputs, float *const *outputs, int sampleframes);
-   void callSetParameter(int index, float value);
-   float callGetParameter(int index) const;
+   void callSetParameter(int index, float value);   
    void callSetProgram(int index);
    void callSetChunk(bool isPgm, int len, void *buf);
    void callSetChunk(bool isPgm, int len, void *buf, VstPatchChunkInfo *info);
@@ -298,12 +418,12 @@ private:
    int mMidiOuts;
    bool mAutomatable;
    size_t mUserBlockSize;
-   wxString mName;
+   
    wxString mVendor;
    wxString mDescription;
    int mVersion;
    bool mInteractive;
-   int mVstVersion;
+   
 
    static intptr_t mCurrentEffectID;
 
@@ -342,7 +462,6 @@ private:
    ResourceHandle mResource;
 #endif
 
-   AEffect *mAEffect;
 
    VstTimeInfo mTimeInfo;
 
@@ -356,7 +475,7 @@ private:
    bool mWantsIdle;
    bool mWantsEditIdle;
 
-   wxCRIT_SECT_DECLARE_MEMBER(mDispatcherLock);
+   
 
    std::unique_ptr<VSTEffectTimer> mTimer;
    int mTimerGuard;
@@ -368,7 +487,7 @@ private:
 
    // UI
    wxWeakRef<wxDialog> mDialog;
-   wxWindow *mParent;
+   
    wxSizerItem *mContainer;
    bool mGui;
 
@@ -380,15 +499,18 @@ private:
    ArrayOf<wxStaticText *> mDisplays;
    ArrayOf<wxStaticText *> mLabels;
 
-   bool mInSet;
-   bool mInChunk;
-   wxString mChunk;
-   long mXMLVersion;
-   VstPatchChunkInfo mXMLInfo;
    
    DECLARE_EVENT_TABLE()
 
    friend class VSTEffectsModule;
+
+   mutable bool mInitialFetchDone{ false };
+
+   // Set the handle with the given CommandParameters
+   bool StoreCommandParameters(const CommandParameters& parms);
+
+   // Read parameters from the handle and write them into the passed CommandParameters
+   bool FetchCommandParameters(CommandParameters& parms) const;
 };
 
 class VSTEffectsModule final : public PluginProvider

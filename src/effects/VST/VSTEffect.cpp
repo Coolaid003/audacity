@@ -1230,8 +1230,9 @@ int VSTEffect::ShowClientInterface(
    return mDialog->ShowModal();
 }
 
-bool VSTEffect::SaveSettings(
-   const EffectSettings &, CommandParameters & parms) const
+
+// This used to be ::SaveSettings
+bool VSTEffect::FetchCommandParameters(CommandParameters& parms) const
 {
    for (int i = 0; i < mAEffect->numParams; i++)
    {
@@ -1251,8 +1252,9 @@ bool VSTEffect::SaveSettings(
    return true;
 }
 
-bool VSTEffect::LoadSettings(
-   const CommandParameters & parms, EffectSettings &settings) const
+// This used to be ::LoadSettings
+bool VSTEffect::StoreCommandParameters(
+   const CommandParameters & parms)
 {
    constCallDispatcher(effBeginSetProgram, 0, 0, NULL, 0.0);
    for (int i = 0; i < mAEffect->numParams; i++)
@@ -1280,6 +1282,49 @@ bool VSTEffect::LoadSettings(
 
    return true;
 }
+
+
+bool VSTEffect::SaveSettings(const EffectSettings& settings, CommandParameters& parms) const
+{
+   const VSTEffectSettings& vstSettings = GetSettings(settings);
+
+   for (const auto& item : vstSettings.mParamsMap)
+   {
+      const wxString& name  = item.first;
+      const float&    value = item.second;
+
+      if (!parms.Write(name, value))
+      {
+         return false;
+      }
+   }
+
+   return true;
+}
+
+bool VSTEffect::LoadSettings(const CommandParameters& parms, EffectSettings& settings) const
+{
+   VSTEffectSettings& vstSettings = GetSettings(settings);
+   vstSettings.mParamsMap.clear();
+
+   long index{};
+   wxString key;
+   float value;
+   if (parms.GetFirstEntry(key, index))
+   {
+      do
+      {
+         if (parms.Read(key, value))
+            vstSettings.mParamsMap[key] = value;
+         else
+            return false;
+
+      } while (parms.GetNextEntry(key, index));
+   }
+
+   return true;
+}
+
 
 bool VSTEffect::LoadUserPreset(
    const RegistryPath & name, EffectSettings &settings) const
@@ -1389,6 +1434,8 @@ bool VSTEffect::ValidateUI(EffectSettings &settings)
    if (GetType() == EffectTypeGenerate)
       settings.extra.SetDuration(mDuration->GetValue());
 
+   FetchSettings(GetSettings(settings));
+
    return true;
 }
 
@@ -1426,7 +1473,7 @@ bool VSTEffect::CanExportPresets()
 }
 
 // Throws exceptions rather than reporting errors.
-void VSTEffect::ExportPresets(const EffectSettings &) const
+void VSTEffect::ExportPresets(const EffectSettings& settings) const
 {
    wxString path;
 
@@ -1452,6 +1499,8 @@ void VSTEffect::ExportPresets(const EffectSettings &) const
    {
       return;
    }
+
+   StoreSettings(GetSettings(settings));
 
    wxFileName fn(path);
    wxString ext = fn.GetExt();
@@ -1486,7 +1535,7 @@ void VSTEffect::ExportPresets(const EffectSettings &) const
 //
 // Based on work by Sven Giermann
 //
-void VSTEffect::ImportPresets(EffectSettings &)
+void VSTEffect::ImportPresets(EffectSettings& settings)
 {
    wxString path;
 
@@ -1549,6 +1598,8 @@ void VSTEffect::ImportPresets(EffectSettings &)
    }
 
    RefreshParameters();
+
+   FetchSettings(GetSettings(settings));
 
    return;
 }
@@ -1885,12 +1936,27 @@ std::vector<int> VSTEffect::GetEffectIDs()
    return effectIDs;
 }
 
+
+VstPatchChunkInfo VSTEffectWrapper::GetChunkInfo() const
+{
+   VstPatchChunkInfo info = { 1, mAEffect->uniqueID, mAEffect->version, mAEffect->numParams, "" };
+   return info;
+}
+
+bool VSTEffectWrapper::IsCompatible(const VstPatchChunkInfo& info) const
+{
+   return  (info.pluginUniqueID == mAEffect->uniqueID) &&
+           (info.pluginVersion  == mAEffect->version) &&
+           (info.numElements    == mAEffect->numParams);
+}
+
 bool VSTEffect::LoadParameters(
    const RegistryPath & group, EffectSettings &settings)
 {
    wxString value;
 
-   VstPatchChunkInfo info = {1, mAEffect->uniqueID, mAEffect->version, mAEffect->numParams, ""};
+   auto info = GetChunkInfo();
+
    GetConfig(*this, PluginSettings::Private, group, wxT("UniqueID"),
       info.pluginUniqueID, info.pluginUniqueID);
    GetConfig(*this, PluginSettings::Private, group, wxT("Version"),
@@ -1898,9 +1964,7 @@ bool VSTEffect::LoadParameters(
    GetConfig(*this, PluginSettings::Private, group, wxT("Elements"),
       info.numElements, info.numElements);
 
-   if ((info.pluginUniqueID != mAEffect->uniqueID) ||
-       (info.pluginVersion != mAEffect->version) ||
-       (info.numElements != mAEffect->numParams))
+   if ( ! IsCompatible(info) )
    {
       return false;
    }
@@ -1914,6 +1978,7 @@ bool VSTEffect::LoadParameters(
       if (len)
       {
          callSetChunk(true, len, buf.get(), &info);
+         FetchSettings(GetSettings(settings));
       }
 
       return true;
@@ -1932,20 +1997,30 @@ bool VSTEffect::LoadParameters(
       return false;
    }
 
-   return LoadSettings(eap, settings);
+   const bool storeOK = StoreCommandParameters(eap);
+   if (storeOK)
+     FetchSettings(GetSettings(settings));
+
+   return storeOK;
+}
+
+bool VSTEffectWrapper::SupportsChunk() const
+{
+   return (mAEffect->flags & effFlagsProgramChunks);
 }
 
 bool VSTEffect::SaveParameters(
    const RegistryPath & group, const EffectSettings &settings) const
 {
-   SetConfig(*this, PluginSettings::Private, group, wxT("UniqueID"),
-      mAEffect->uniqueID);
-   SetConfig(*this, PluginSettings::Private, group, wxT("Version"),
-      mAEffect->version);
-   SetConfig(*this, PluginSettings::Private, group, wxT("Elements"),
-      mAEffect->numParams);
+   const auto& vstSettings = GetSettings(settings);
 
-   if (mAEffect->flags & effFlagsProgramChunks)
+   SetConfig(*this, PluginSettings::Private, group, wxT("UniqueID"), vstSettings.mUniqueID );
+   SetConfig(*this, PluginSettings::Private, group, wxT("Version"),  vstSettings.mVersion  );
+   SetConfig(*this, PluginSettings::Private, group, wxT("Elements"), vstSettings.mNumParams);
+
+   StoreSettings(vstSettings);
+
+   if ( SupportsChunk() )
    {
       void *chunk = NULL;
       int clen = (int) constCallDispatcher(effGetChunk, 1, 0, &chunk, 0.0);
@@ -1960,7 +2035,7 @@ bool VSTEffect::SaveParameters(
    }
 
    CommandParameters eap;
-   if (!SaveSettings(settings, eap))
+   if (!FetchCommandParameters(eap))
    {
       return false;
    }
@@ -2116,7 +2191,7 @@ void VSTEffect::SetBufferDelay(int samples)
    return;
 }
 
-int VSTEffect::GetString(wxString & outstr, int opcode, int index) const
+int VSTEffectWrapper::GetString(wxString & outstr, int opcode, int index) const
 {
    char buf[256];
 
@@ -2130,7 +2205,7 @@ int VSTEffect::GetString(wxString & outstr, int opcode, int index) const
    return 0;
 }
 
-wxString VSTEffect::GetString(int opcode, int index) const
+wxString VSTEffectWrapper::GetString(int opcode, int index) const
 {
    wxString str;
 
@@ -2139,7 +2214,7 @@ wxString VSTEffect::GetString(int opcode, int index) const
    return str;
 }
 
-void VSTEffect::SetString(int opcode, const wxString & str, int index)
+void VSTEffectWrapper::SetString(int opcode, const wxString & str, int index)
 {
    char buf[256];
    strcpy(buf, str.Left(255).ToUTF8());
@@ -2147,7 +2222,7 @@ void VSTEffect::SetString(int opcode, const wxString & str, int index)
    callDispatcher(opcode, index, 0, buf, 0.0);
 }
 
-intptr_t VSTEffect::callDispatcher(int opcode,
+intptr_t VSTEffectWrapper::callDispatcher(int opcode,
                                    int index, intptr_t value, void *ptr, float opt)
 {
    // Needed since we might be in the dispatcher when the timer pops
@@ -2155,11 +2230,11 @@ intptr_t VSTEffect::callDispatcher(int opcode,
    return mAEffect->dispatcher(mAEffect, opcode, index, value, ptr, opt);
 }
 
-intptr_t VSTEffect::constCallDispatcher(int opcode,
+intptr_t VSTEffectWrapper::constCallDispatcher(int opcode,
    int index, intptr_t value, void *ptr, float opt) const
 {
    // Assume we are passed a read-only dispatcher function code
-   return const_cast<VSTEffect*>(this)
+   return const_cast<VSTEffectWrapper*>(this)
       ->callDispatcher(opcode, index, value, ptr, opt);
 }
 
@@ -2171,7 +2246,7 @@ void VSTEffect::callProcessReplacing(const float *const *inputs,
       const_cast<float**>(outputs), sampleframes);
 }
 
-float VSTEffect::callGetParameter(int index) const
+float VSTEffectWrapper::callGetParameter(int index) const
 {
    return mAEffect->getParameter(mAEffect, index);
 }
@@ -2187,6 +2262,15 @@ void VSTEffect::callSetParameter(int index, float value)
    }
 }
 
+void VSTEffectWrapper::callSetParameterB(int index, float value)
+{
+   if (mVstVersion == 0 || callDispatcher(effCanBeAutomated, 0, index, NULL, 0.0))
+   {
+      mAEffect->setParameter(mAEffect, index, value);      
+   }
+}
+
+
 void VSTEffect::callSetProgram(int index)
 {
    callDispatcher(effBeginSetProgram, 0, 0, NULL, 0.0);
@@ -2198,7 +2282,18 @@ void VSTEffect::callSetProgram(int index)
    callDispatcher(effEndSetProgram, 0, 0, NULL, 0.0);
 }
 
-void VSTEffect::callSetChunk(bool isPgm, int len, void *buf)
+
+void VSTEffectWrapper::callSetProgramB(int index)
+{
+   callDispatcher(effBeginSetProgram, 0, 0, NULL, 0.0);
+
+   callDispatcher(effSetProgram, 0, index, NULL, 0.0);
+
+   callDispatcher(effEndSetProgram, 0, 0, NULL, 0.0);
+}
+
+
+void VSTEffectWrapper::callSetChunkB(bool isPgm, int len, void *buf)
 {
    VstPatchChunkInfo info;
 
@@ -2208,15 +2303,15 @@ void VSTEffect::callSetChunk(bool isPgm, int len, void *buf)
    info.pluginVersion = mAEffect->version;
    info.numElements = isPgm ? mAEffect->numParams : mAEffect->numPrograms;
 
-   callSetChunk(isPgm, len, buf, &info);
+   callSetChunkB(isPgm, len, buf, &info);
 }
 
-void VSTEffect::callSetChunk(bool isPgm, int len, void *buf, VstPatchChunkInfo *info)
+void VSTEffectWrapper::callSetChunkB(bool isPgm, int len, void *buf, VstPatchChunkInfo *info) const
 {
    if (isPgm)
    {
       // Ask the effect if this is an acceptable program
-      if (callDispatcher(effBeginLoadProgram, 0, 0, info, 0.0) == -1)
+      if (constCallDispatcher(effBeginLoadProgram, 0, 0, info, 0.0) == -1)
       {
          return;
       }
@@ -2224,19 +2319,34 @@ void VSTEffect::callSetChunk(bool isPgm, int len, void *buf, VstPatchChunkInfo *
    else
    {
       // Ask the effect if this is an acceptable bank
-      if (callDispatcher(effBeginLoadBank, 0, 0, info, 0.0) == -1)
+      if (constCallDispatcher(effBeginLoadBank, 0, 0, info, 0.0) == -1)
       {
          return;
       }
    }
 
-   callDispatcher(effBeginSetProgram, 0, 0, NULL, 0.0);
-   callDispatcher(effSetChunk, isPgm ? 1 : 0, len, buf, 0.0);
-   callDispatcher(effEndSetProgram, 0, 0, NULL, 0.0);
+   constCallDispatcher(effBeginSetProgram, 0, 0, NULL, 0.0);
+   constCallDispatcher(effSetChunk, isPgm ? 1 : 0, len, buf, 0.0);
+   constCallDispatcher(effEndSetProgram, 0, 0, NULL, 0.0);
 
-   for (const auto &slave : mSlaves)
-      slave->callSetChunk(isPgm, len, buf, info);
 }
+
+
+void VSTEffect::callSetChunk(bool isPgm, int len, void* buf)
+{
+   callSetChunkB(isPgm, len, buf);
+}
+
+void VSTEffect::callSetChunk(bool isPgm, int len, void* buf, VstPatchChunkInfo* info)
+{
+   callSetChunkB(isPgm, len, buf, info);
+
+   for (const auto& slave : mSlaves)
+      slave->callSetChunkB(isPgm, len, buf, info);
+}
+
+
+
 
 void VSTEffect::RemoveHandler()
 {
@@ -2510,7 +2620,7 @@ void VSTEffect::OnSlider(wxCommandEvent & evt)
    RefreshParameters(i);
 }
 
-bool VSTEffect::LoadFXB(const wxFileName & fn)
+bool VSTEffectWrapper::LoadFXB(const wxFileName & fn)
 {
    bool ret = false;
 
@@ -2662,7 +2772,7 @@ bool VSTEffect::LoadFXB(const wxFileName & fn)
          }
 
          // Set the entire bank in one shot
-         callSetChunk(false, size, &iptr[40], &info);
+         callSetChunkB(false, size, &iptr[40], &info);
 
          // Success
          ret = true;
@@ -2676,14 +2786,14 @@ bool VSTEffect::LoadFXB(const wxFileName & fn)
       // Set the active program
       if (ret && version >= 2)
       {
-         callSetProgram(curProg);
+         callSetProgramB(curProg);
       }
    } while (false);
 
    return ret;
 }
 
-bool VSTEffect::LoadFXP(const wxFileName & fn)
+bool VSTEffectWrapper::LoadFXP(const wxFileName & fn)
 {
    bool ret = false;
 
@@ -2735,7 +2845,7 @@ bool VSTEffect::LoadFXP(const wxFileName & fn)
    return ret;
 }
 
-bool VSTEffect::LoadFXProgram(unsigned char **bptr, ssize_t & len, int index, bool dryrun)
+bool VSTEffectWrapper::LoadFXProgram(unsigned char **bptr, ssize_t & len, int index, bool dryrun)
 {
    // Most references to the data are via an "int" array
    int32_t *iptr = (int32_t *) *bptr;
@@ -2829,7 +2939,7 @@ bool VSTEffect::LoadFXProgram(unsigned char **bptr, ssize_t & len, int index, bo
          for (int i = 0; i < numParams; i++)
          {
             wxUint32 val = wxUINT32_SWAP_ON_LE(iptr[14 + i]);
-            callSetParameter(i, reinterpretAsFloat(val));
+            callSetParameterB(i, reinterpretAsFloat(val));
          }
          callDispatcher(effEndSetProgram, 0, 0, NULL, 0.0);
       }
@@ -2868,7 +2978,7 @@ bool VSTEffect::LoadFXProgram(unsigned char **bptr, ssize_t & len, int index, bo
       // Set the entire program in one shot
       if (!dryrun)
       {
-         callSetChunk(true, size, &iptr[15], &info);
+         callSetChunkB(true, size, &iptr[15], &info);
       }
 
       // Update in case we're loading an "FxBk" format bank file
@@ -2889,7 +2999,7 @@ bool VSTEffect::LoadFXProgram(unsigned char **bptr, ssize_t & len, int index, bo
    return true;
 }
 
-bool VSTEffect::LoadXML(const wxFileName & fn)
+bool VSTEffectWrapper::LoadXML(const wxFileName & fn)
 {
    mInChunk = false;
    mInSet = false;
@@ -2921,7 +3031,7 @@ bool VSTEffect::LoadXML(const wxFileName & fn)
    return true;
 }
 
-void VSTEffect::SaveFXB(const wxFileName & fn) const
+void VSTEffectWrapper::SaveFXB(const wxFileName & fn) const
 {
    // Create/Open the file
    const wxString fullPath{fn.GetFullPath()};
@@ -3009,7 +3119,7 @@ void VSTEffect::SaveFXB(const wxFileName & fn) const
    return;
 }
 
-void VSTEffect::SaveFXP(const wxFileName & fn) const
+void VSTEffectWrapper::SaveFXP(const wxFileName & fn) const
 {
    // Create/Open the file
    const wxString fullPath{ fn.GetFullPath() };
@@ -3045,7 +3155,7 @@ void VSTEffect::SaveFXP(const wxFileName & fn) const
    return;
 }
 
-void VSTEffect::SaveFXProgram(wxMemoryBuffer & buf, int index) const
+void VSTEffectWrapper::SaveFXProgram(wxMemoryBuffer & buf, int index) const
 {
    wxInt32 subType;
    void *chunkPtr;
@@ -3106,7 +3216,7 @@ void VSTEffect::SaveFXProgram(wxMemoryBuffer & buf, int index) const
 }
 
 // Throws exceptions rather than giving error return.
-void VSTEffect::SaveXML(const wxFileName & fn) const
+void VSTEffectWrapper::SaveXML(const wxFileName & fn) const
 // may throw
 {
    XMLFileWriter xmlFile{ fn.GetFullPath(), XO("Error Saving Effect Presets") };
@@ -3116,7 +3226,7 @@ void VSTEffect::SaveXML(const wxFileName & fn) const
 
    xmlFile.StartTag(wxT("effect"));
    // Use internal name only in persistent information
-   xmlFile.WriteAttr(wxT("name"), GetSymbol().Internal());
+   xmlFile.WriteAttr(wxT("name"), GetSymbolB().Internal());
    xmlFile.WriteAttr(wxT("uniqueID"), mAEffect->uniqueID);
    xmlFile.WriteAttr(wxT("version"), mAEffect->version);
    xmlFile.WriteAttr(wxT("numParams"), mAEffect->numParams);
@@ -3165,7 +3275,7 @@ void VSTEffect::SaveXML(const wxFileName & fn) const
    xmlFile.Commit();
 }
 
-bool VSTEffect::HandleXMLTag(const std::string_view& tag, const AttributesList &attrs)
+bool VSTEffectWrapper::HandleXMLTag(const std::string_view& tag, const AttributesList &attrs)
 {
    if (tag == "vstprogrampersistence")
    {
@@ -3212,7 +3322,7 @@ bool VSTEffect::HandleXMLTag(const std::string_view& tag, const AttributesList &
          {
             wxString strValue = value.ToWString();
 
-            if (strValue != GetSymbol().Internal())
+            if (strValue != GetSymbolB().Internal())
             {
                auto msg = XO("This parameter file was saved from %s. Continue?")
                   .Format( strValue );
@@ -3359,7 +3469,7 @@ bool VSTEffect::HandleXMLTag(const std::string_view& tag, const AttributesList &
          return false;
       }
 
-      callSetParameter(ndx, val);
+      callSetParameterB(ndx, val);
 
       return true;
    }
@@ -3373,7 +3483,7 @@ bool VSTEffect::HandleXMLTag(const std::string_view& tag, const AttributesList &
    return false;
 }
 
-void VSTEffect::HandleXMLEndTag(const std::string_view& tag)
+void VSTEffectWrapper::HandleXMLEndTag(const std::string_view& tag)
 {
    if (tag == "chunk")
    {
@@ -3384,7 +3494,7 @@ void VSTEffect::HandleXMLEndTag(const std::string_view& tag)
          int len = Base64::Decode(mChunk, buf.get());
          if (len)
          {
-            callSetChunk(true, len, buf.get(), &mXMLInfo);
+            callSetChunkB(true, len, buf.get(), &mXMLInfo);
          }
 
          mChunk.clear();
@@ -3403,7 +3513,7 @@ void VSTEffect::HandleXMLEndTag(const std::string_view& tag)
    }
 }
 
-void VSTEffect::HandleXMLContent(const std::string_view& content)
+void VSTEffectWrapper::HandleXMLContent(const std::string_view& content)
 {
    if (mInChunk)
    {
@@ -3411,7 +3521,7 @@ void VSTEffect::HandleXMLContent(const std::string_view& content)
    }
 }
 
-XMLTagHandler *VSTEffect::HandleXMLChild(const std::string_view& tag)
+XMLTagHandler *VSTEffectWrapper::HandleXMLChild(const std::string_view& tag)
 {
    if (tag == "vstprogrampersistence")
    {
@@ -3440,5 +3550,128 @@ XMLTagHandler *VSTEffect::HandleXMLChild(const std::string_view& tag)
 
    return NULL;
 }
+
+
+void VSTEffectWrapper::ForEachParameter(ParameterVisitor visitor) const
+{
+   for (int i = 0; i < mAEffect->numParams; i++)
+   {
+      ParameterInfo pi{ i, GetString(effGetParamName, i) };
+
+      if (!visitor(pi))
+         break;
+   }
+}
+
+
+bool VSTEffectWrapper::FetchSettings(VSTEffectSettings& vst3settings) const
+{
+   // Get the fallback ID-value parameters
+   ForEachParameter
+   (
+      [&](const ParameterInfo& pi)
+      {
+         float val = callGetParameter(pi.mID);
+         vst3settings.mParamsMap[pi.mName] = val;
+         return true;
+      }
+   );
+
+   // These are here to be checked against for compatibility later
+   vst3settings.mVersion   = mAEffect->version;
+   vst3settings.mUniqueID  = mAEffect->uniqueID;
+   vst3settings.mNumParams = mAEffect->numParams;
+
+   // Get the chunk (if supported)
+   vst3settings.mChunk = std::nullopt;
+   if (mAEffect->flags & effFlagsProgramChunks)
+   {
+      void* chunk = NULL;
+      int clen = (int)constCallDispatcher(effGetChunk, 1, 0, &chunk, 0.0);
+      if (clen > 0)
+      {
+         vst3settings.mChunk = Base64::Encode(chunk, clen);
+      }
+   }
+
+   return true;
+}
+
+
+bool VSTEffectWrapper::StoreSettings(const VSTEffectSettings& vst3settings) const
+{
+   // First, make sure settings are compatibile with the plugin
+   if ((vst3settings.mUniqueID  != mAEffect->uniqueID)   ||
+       (vst3settings.mVersion   != mAEffect->version)    ||
+       (vst3settings.mNumParams != mAEffect->numParams)      )
+   {
+      return false;
+   }
+
+
+   // Try using the chunk first (if available)
+   if (vst3settings.mChunk)
+   {
+      ArrayOf<char> buf{ vst3settings.mChunk->length() / 4 * 3 };
+
+      int len = Base64::Decode(*vst3settings.mChunk, buf.get());
+      if (len)
+      {
+         VstPatchChunkInfo info = { 1, mAEffect->uniqueID, mAEffect->version, mAEffect->numParams, "" };
+
+         callSetChunkB(true, len, buf.get(), &info);
+         return true;
+      }         
+   }
+
+
+   // Chunk unavailable / decoding it did not work? fall back to param ID-value pairs
+   const auto vstVersion = constCallDispatcher(effGetVstVersion, 0, 0, NULL, 0);
+
+   ForEachParameter
+   (
+      [&](const ParameterInfo& pi)
+      {
+         const auto itr = vst3settings.mParamsMap.find(pi.mName);
+         if (itr != vst3settings.mParamsMap.end())
+         {
+            const float& value = itr->second;
+
+            // this is basically a copy of VSTEffect::callSetParameter,
+            // minus the recursive calls to the slaves            
+            if (vstVersion == 0 || constCallDispatcher(effCanBeAutomated, 0, pi.mID, NULL, 0.0))
+            {
+               mAEffect->setParameter(mAEffect, pi.mID, value);
+            }
+         }
+         return true;
+      }
+   );
+   
+
+   return false;
+}
+
+bool VSTEffect::TransferDataToWindow(const EffectSettings& settings)
+{
+   if (!StoreSettings(GetSettings(settings)))
+      return false;
+
+   // TODO (?): update of the GUI controls 
+
+   return true;
+}
+
+EffectSettings VSTEffect::MakeSettings() const
+{
+   auto result = StatefulPerTrackEffect::MakeSettings();
+   // Cause initial population of the map stored in the stateful effect
+   if (!mInitialFetchDone) {
+      FetchSettings(GetSettings(result));
+      mInitialFetchDone = true;
+   }
+   return result;
+}
+
 
 #endif // USE_VST
