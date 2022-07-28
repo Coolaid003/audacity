@@ -602,19 +602,17 @@ BEGIN_EVENT_TABLE(VSTEffect, wxEvtHandler)
    EVT_COMMAND(wxID_ANY, EVT_SIZEWINDOW, VSTEffect::OnSizeWindow)
 END_EVENT_TABLE()
 
-// Needed to support shell plugins...sucks, but whatcha gonna do???
-intptr_t VSTEffect::mCurrentEffectID;
 
 typedef AEffect *(*vstPluginMain)(audioMasterCallback audioMaster);
 
-intptr_t VSTEffect::AudioMaster(AEffect * effect,
-                                int32_t opcode,
-                                int32_t index,
-                                intptr_t value,
-                                void * ptr,
-                                float opt)
+intptr_t VSTEffectWrapper::AudioMaster(AEffect * effect,
+                                       int32_t opcode,
+                                       int32_t index,
+                                       intptr_t value,
+                                       void * ptr,
+                                       float opt)
 {
-   VSTEffect *vst = (effect ? (VSTEffect *) effect->ptr2 : NULL);
+   VSTEffectWrapper *vst = (effect ? static_cast<VSTEffectWrapper*>(effect->ptr2) : nullptr);
 
    // Handles operations during initialization...before VSTEffect has had a
    // chance to set its instance pointer.
@@ -624,7 +622,7 @@ intptr_t VSTEffect::AudioMaster(AEffect * effect,
          return (intptr_t) 2400;
 
       case audioMasterCurrentId:
-         return mCurrentEffectID;
+         return vst->mCurrentEffectID;
 
       case audioMasterGetVendorString:
          strcpy((char *) ptr, "Audacity Team");    // Do not translate, max 64 + 1 for null terminator
@@ -804,10 +802,15 @@ VSTEffect::VSTEffect(const PluginPath & path, VSTEffect *master)
    mTimeInfo.timeSigDenominator = 4;
    mTimeInfo.flags = kVstTempoValid | kVstNanosValid;
 
-   // If we're a slave then go ahead a load immediately
+   // Get the constant data that are shared by all instances
+   // (e.g. entry point in the dll, vst version, no. of channels etc.)
+   LoadCommon();
+
+   // If we're a slave then go ahead and load immediately
    if (mMaster)
    {
-      Load();
+      if ( ! Load() )
+         Unload();
    }
 }
 
@@ -920,7 +923,8 @@ bool VSTEffect::InitializePlugin()
 {
    if (!mAEffect)
    {
-      Load();
+      if ( ! Load() )
+         Unload();
    }
 
    if (!mAEffect)
@@ -1545,18 +1549,17 @@ void VSTEffect::ShowOptions()
 // VSTEffect implementation
 // ============================================================================
 
-bool VSTEffect::Load()
+// Load the VST things that can be shared among all instances
+//------------------------------------------------------------------------------
+bool VSTEffect::LoadCommon()
 {
-   vstPluginMain pluginMain;
-   bool success = false;
-
    long effectID = 0;
-   wxString realPath = mPath.BeforeFirst(wxT(';'));
+   mRealPath = mPath.BeforeFirst(wxT(';'));
    mPath.AfterFirst(wxT(';')).ToLong(&effectID);
-   mCurrentEffectID = (intptr_t) effectID;
+   mCurrentEffectID = (intptr_t)effectID;
 
-   mModule = NULL;
-   mAEffect = NULL;
+   mModule = nullptr;
+   mAEffect = nullptr;
 
 #if defined(__WXMAC__)
    // Start clean
@@ -1565,7 +1568,7 @@ bool VSTEffect::Load()
    mResource = ResourceHandle{};
 
    // Convert the path to a CFSTring
-   wxCFStringRef path(realPath);
+   wxCFStringRef path(mRealPath);
 
    // Create the bundle using the URL
    BundleHandle bundleRef{ CFBundleCreate(kCFAllocatorDefault,
@@ -1574,7 +1577,7 @@ bool VSTEffect::Load()
          CFURLCreateWithFileSystemPath(kCFAllocatorDefault,
             path, kCFURLPOSIXPathStyle, true)
       }.get()
-   )};
+   ) };
 
    // Bail if the bundle wasn't created
    if (!bundleRef)
@@ -1594,21 +1597,21 @@ bool VSTEffect::Load()
       return false;
 
    // Attempt to open it
-   mModule.reset((char*)dlopen((char *) exePath, RTLD_NOW | RTLD_LOCAL));
+   mModule.reset((char*)dlopen((char*)exePath, RTLD_NOW | RTLD_LOCAL));
    if (!mModule)
       return false;
 
    // Try to locate the NEW plugin entry point
-   pluginMain = (vstPluginMain) dlsym(mModule.get(), "VSTPluginMain");
+   mPluginMain = static_cast<vstPluginMain>( dlsym(mModule.get(), "VSTPluginMain") );
 
    // If not found, try finding the old entry point
-   if (pluginMain == NULL)
+   if (mPluginMain == nullptr)
    {
-      pluginMain = (vstPluginMain) dlsym(mModule.get(), "main_macho");
+      mPluginMain = static_cast<vstPluginMain>( dlsym(mModule.get(), "main_macho") );
    }
 
    // Must not be a VST plugin
-   if (pluginMain == NULL)
+   if (mPluginMain == nullptr)
    {
       mModule.reset();
       return false;
@@ -1629,8 +1632,8 @@ bool VSTEffect::Load()
       wxLogNull nolog;
 
       // Try to load the library
-      auto lib = std::make_unique<wxDynamicLibrary>(realPath);
-      if (!lib) 
+      auto lib = std::make_unique<wxDynamicLibrary>(mRealPath);
+      if (!lib)
          return false;
 
       // Bail if it wasn't successful
@@ -1638,11 +1641,11 @@ bool VSTEffect::Load()
          return false;
 
       // Try to find the entry point, while suppressing error messages
-      pluginMain = (vstPluginMain) lib->GetSymbol(wxT("VSTPluginMain"));
-      if (pluginMain == NULL)
+      mPluginMain = static_cast<vstPluginMain>( lib->GetSymbol(wxT("VSTPluginMain")) );
+      if (mPluginMain == nullptr)
       {
-         pluginMain = (vstPluginMain) lib->GetSymbol(wxT("main"));
-         if (pluginMain == NULL)
+         mPluginMain = static_cast<vstPluginMain>( lib->GetSymbol(wxT("main")) );
+         if (mPluginMain == nullptr)
             return false;
       }
 
@@ -1671,21 +1674,21 @@ bool VSTEffect::Load()
 #ifndef RTLD_DEEPBIND
 #define RTLD_DEEPBIND 0
 #endif
-   ModuleHandle lib {
-      (char*) dlopen((const char *)wxString(realPath).ToUTF8(),
+   ModuleHandle lib{
+      (char*)dlopen((const char*)wxString(mRealPath).ToUTF8(),
                      RTLD_NOW | RTLD_LOCAL | RTLD_DEEPBIND)
    };
-   if (!lib) 
+   if (!lib)
    {
       return false;
    }
 
    // Try to find the entry point, while suppressing error messages
-   pluginMain = (vstPluginMain) dlsym(lib.get(), "VSTPluginMain");
-   if (pluginMain == NULL)
+   mPluginMain = static_cast<vstPluginMain>( dlsym(lib.get(), "VSTPluginMain") );
+   if (mPluginMain == nullptr)
    {
-      pluginMain = (vstPluginMain) dlsym(lib.get(), "main");
-      if (pluginMain == NULL)
+      mPluginMain = static_cast<vstPluginMain>( dlsym(lib.get(), "main") );
+      if (mPluginMain == nullptr)
          return false;
    }
 
@@ -1694,10 +1697,99 @@ bool VSTEffect::Load()
 
 #endif
 
-   // Initialize the plugin
+   AEffect* tempHandle;
+
    try
    {
-      mAEffect = pluginMain(VSTEffect::AudioMaster);
+      tempHandle = mPluginMain(VSTEffectWrapper::AudioMaster);
+   }
+   catch (...)
+   {
+      wxLogMessage(wxT("VST plugin initialization failed\n"));
+      return false;
+   }
+
+   bool success = false;
+
+   // Ask the plugin to identify itself...might be needed for older plugins
+   callDispatcher(tempHandle, effIdentify, 0, 0, NULL, 0);
+
+   // Open a temporary plugin handle, to get some info on the plugin
+   callDispatcher(tempHandle, effOpen, 0, 0, NULL, 0.0);
+
+   // Get the VST version the plugin understands
+   mVstVersion = callDispatcher(tempHandle, effGetVstVersion, 0, 0, NULL, 0);
+
+   // Ensure that it looks like a plugin and can deal with ProcessReplacing
+   // calls.  Also exclude synths for now.
+   if (   tempHandle->magic == kEffectMagic &&
+        !(tempHandle->flags & effFlagsIsSynth) &&
+          tempHandle->flags & effFlagsCanReplacing)
+   {
+      if (mVstVersion >= 2)
+      {
+         mName = GetStringFromHandle(effGetEffectName, tempHandle);
+         if (mName.length() == 0)
+         {
+            mName = GetStringFromHandle(effGetProductString, tempHandle);
+         }
+      }
+      if (mName.length() == 0)
+      {
+         mName = wxFileName{ mRealPath }.GetName();
+      }
+
+      if (mVstVersion >= 2)
+      {
+         mVendor = GetStringFromHandle(effGetVendorString, tempHandle);
+         mVersion = wxINT32_SWAP_ON_LE(callDispatcher(tempHandle, effGetVendorVersion, 0, 0, NULL, 0));
+      }
+      if (mVersion == 0)
+      {
+         mVersion = wxINT32_SWAP_ON_LE(tempHandle->version);
+      }
+
+      if (tempHandle->flags & effFlagsHasEditor || tempHandle->numParams != 0)
+      {
+         mInteractive = true;
+      }
+
+      mAudioIns = tempHandle->numInputs;
+      mAudioOuts = tempHandle->numOutputs;
+
+      mMidiIns = 0;
+      mMidiOuts = 0;
+
+      // Check to see if parameters can be automated.  This isn't a guarantee
+      // since it could be that the effect simply doesn't support the opcode.
+      mAutomatable = false;
+      for (int i = 0; i < tempHandle->numParams; i++)
+      {
+         if (callDispatcher(tempHandle, effCanBeAutomated, 0, i, NULL, 0.0))
+         {
+            mAutomatable = true;
+            break;
+         }
+      }
+
+      success = true;
+   }
+
+   // close the temporary handle
+   callDispatcher(tempHandle, effClose, 0, 0, NULL, 0.0);
+
+   return success;
+}
+
+
+bool VSTEffectWrapper::Load()
+{
+   bool success = false;
+
+   // Create the handle to the plugin, also setting the vst callback function
+   try
+   {
+      mAEffect = mPluginMain(VSTEffectWrapper::AudioMaster);
    }
    catch (...)
    {
@@ -1719,85 +1811,20 @@ bool VSTEffect::Load()
       callDispatcher(effSetSampleRate, 0, 0, NULL, 48000.0);
       callDispatcher(effSetBlockSize, 0, 512, NULL, 0);
 
-      // Ask the plugin to identify itself...might be needed for older plugins
-      callDispatcher(effIdentify, 0, 0, NULL, 0);
+      // Make sure we start out with a valid program selection
+      // I've found one plugin (SoundHack +morphfilter) that will
+      // crash Audacity when saving the initial default parameters
+      // with this.
+      //
+      // The following 3 calls to callDispatcher are equivalent to callSetProgram(0),
+      // only done on the mAEFfect handle and not on the slaves too, if present
+      //
+      callDispatcher(effBeginSetProgram, 0, 0, NULL, 0.0);
+      callDispatcher(effSetProgram,      0, 0, NULL, 0.0);
+      callDispatcher(effEndSetProgram,   0, 0, NULL, 0.0);
 
-      // Open the plugin
-      callDispatcher(effOpen, 0, 0, NULL, 0.0);
-
-      // Get the VST version the plugin understands
-      mVstVersion = callDispatcher(effGetVstVersion, 0, 0, NULL, 0);
-
-      // Set it again in case plugin ignored it before the effOpen
-      callDispatcher(effSetSampleRate, 0, 0, NULL, 48000.0);
-      callDispatcher(effSetBlockSize, 0, 512, NULL, 0);
-
-      // Ensure that it looks like a plugin and can deal with ProcessReplacing
-      // calls.  Also exclude synths for now.
-      if (mAEffect->magic == kEffectMagic &&
-         !(mAEffect->flags & effFlagsIsSynth) &&
-         mAEffect->flags & effFlagsCanReplacing)
-      {
-         if (mVstVersion >= 2)
-         {
-            mName = GetString(effGetEffectName);
-            if (mName.length() == 0)
-            {
-               mName = GetString(effGetProductString);
-            }
-         }
-         if (mName.length() == 0)
-         {
-            mName = wxFileName{realPath}.GetName();
-         }
-
-         if (mVstVersion >= 2)
-         {
-            mVendor = GetString(effGetVendorString);
-            mVersion = wxINT32_SWAP_ON_LE(callDispatcher(effGetVendorVersion, 0, 0, NULL, 0));
-         }
-         if (mVersion == 0)
-         {
-            mVersion = wxINT32_SWAP_ON_LE(mAEffect->version);
-         }
-
-         if (mAEffect->flags & effFlagsHasEditor || mAEffect->numParams != 0)
-         {
-            mInteractive = true;
-         }
-
-         mAudioIns = mAEffect->numInputs;
-         mAudioOuts = mAEffect->numOutputs;
-
-         mMidiIns = 0;
-         mMidiOuts = 0;
-
-         // Check to see if parameters can be automated.  This isn't a guarantee
-         // since it could be that the effect simply doesn't support the opcode.
-         mAutomatable = false;
-         for (int i = 0; i < mAEffect->numParams; i++)
-         {
-            if (callDispatcher(effCanBeAutomated, 0, i, NULL, 0.0))
-            {
-               mAutomatable = true;
-               break;
-            }
-         }
-
-         // Make sure we start out with a valid program selection
-         // I've found one plugin (SoundHack +morphfilter) that will
-         // crash Audacity when saving the initial default parameters
-         // with this.
-         callSetProgram(0);
-
-         // Pretty confident that we're good to go
-         success = true;
-      }
-   }
-
-   if (!success)
-   {
-      Unload();
+      // Pretty confident that we're good to go
+      success = true;
    }
 
    return success;
@@ -2129,6 +2156,23 @@ wxString VSTEffectWrapper::GetString(int opcode, int index) const
    return str;
 }
 
+wxString VSTEffectWrapper::GetStringFromHandle(int opcode, AEffect* handle) const
+{
+   wxString str;
+
+   char buf[256];
+
+   memset(buf, 0, sizeof(buf));
+
+   // Assume we are passed a read-only dispatcher function code
+   // constCallDispatcher(opcode, 0, 0, buf, 0.0);
+
+   const_cast<VSTEffectWrapper*>(this)->callDispatcher(handle, opcode, 0, 0, buf, 0.0);
+
+
+   return wxString::FromUTF8(buf);
+}
+
 void VSTEffectWrapper::SetString(int opcode, const wxString & str, int index)
 {
    char buf[256];
@@ -2140,10 +2184,18 @@ void VSTEffectWrapper::SetString(int opcode, const wxString & str, int index)
 intptr_t VSTEffectWrapper::callDispatcher(int opcode,
                                    int index, intptr_t value, void *ptr, float opt)
 {
+   return callDispatcher(mAEffect, opcode, index, value, ptr, opt);
+}
+
+intptr_t VSTEffectWrapper::callDispatcher(
+   AEffect* handle,
+   int opcode, int index, intptr_t value, void* ptr, float opt)
+{
    // Needed since we might be in the dispatcher when the timer pops
    wxCRIT_SECT_LOCKER(locker, mDispatcherLock);
-   return mAEffect->dispatcher(mAEffect, opcode, index, value, ptr, opt);
+   return handle->dispatcher(handle, opcode, index, value, ptr, opt);
 }
+
 
 intptr_t VSTEffectWrapper::constCallDispatcher(int opcode,
    int index, intptr_t value, void *ptr, float opt) const
