@@ -106,7 +106,6 @@ bool EffectBase::DoEffect(EffectSettings &settings, double projectRate,
          trans.Commit();
 
       ReplaceProcessedTracks( false );
-      mPresetNames.clear();
    } );
 
    // We don't yet know the effect type for code in the Nyquist Prompt, so
@@ -146,15 +145,6 @@ bool EffectBase::DoEffect(EffectSettings &settings, double projectRate,
    if (pAccess)
       pAccess->ModifySettings(updater);
 
-#ifdef EXPERIMENTAL_SPECTRAL_EDITING
-   mF0 = selectedRegion.f0();
-   mF1 = selectedRegion.f1();
-   if( mF0 != SelectedRegion::UndefinedFrequency )
-      mPresetNames.push_back(L"control-f0");
-   if( mF1 != SelectedRegion::UndefinedFrequency )
-      mPresetNames.push_back(L"control-f1");
-
-#endif
    CountWaveTracks();
 
    // Allow the dialog factory to fill this in, but it might not
@@ -343,8 +333,7 @@ void EffectBase::Preview(EffectSettingsAccess &access, bool dryOnly)
    bool isGenerator = GetType() == EffectTypeGenerate;
 
    // Mix a few seconds of audio from all of the tracks
-   double previewLen;
-   gPrefs->Read(wxT("/AudioIO/EffectsPreviewLen"), &previewLen, 6.0);
+   const auto previewLen = EffectsPreviewLen.Read();
 
    const double rate = mProjectRate;
 
@@ -517,3 +506,5 @@ void EffectBase::Preview(EffectSettingsAccess &access, bool dryOnly)
       }
    }
 }
+
+DoubleSetting EffectsPreviewLen{ "/AudioIO/EffectsPreviewLen", 6.0 };

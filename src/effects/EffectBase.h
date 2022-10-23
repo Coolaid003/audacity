@@ -20,7 +20,7 @@
 
 #include "EffectPlugin.h" // to inherit
 #include "EffectInterface.h" // to inherit
-
+#include "Prefs.h" // for DoubleSetting
 
 namespace BasicUI { class ProgressDialog; }
 
@@ -35,6 +35,8 @@ public:
    EffectBase();
    ~EffectBase() override;
 
+   double GetT0() const { return mT0; }
+   double GetT1() const { return mT1; }
 protected:
    // The EffectBase class fully implements the Preview method for you.
    // Only override it if you need to do preprocessing or cleanup.
@@ -87,7 +89,9 @@ protected:
    // preview copies of all wave tracks.
    void IncludeNotSelectedPreviewTracks(bool includeNotSelected);
 
+public:
    // A global counter of all the successful Effect invocations.
+   // It's here only to hack the problems of Nyquist reentrancy with tools.
    static int nEffectsDone;
 
    // If bGoodResult, replace mWaveTracks tracks in mTracks with successfully processed
@@ -95,6 +99,7 @@ protected:
    // Else clear and DELETE mOutputTracks copies.
    void ReplaceProcessedTracks(const bool bGoodResult);
 
+protected:
    BasicUI::ProgressDialog *mProgress{}; // Temporary pointer, NOT deleted in destructor.
    double         mProjectRate{}; // Sample rate of the project - NEW tracks should
                                // be created with this rate...
@@ -109,7 +114,6 @@ protected:
    double         mF0{};
    double         mF1{};
 #endif
-   wxArrayString  mPresetNames;
    unsigned       mUIFlags{ 0 };
 
 private:
@@ -142,5 +146,7 @@ private:
  In the translations of this and other strings, you may transliterate the
  name into another alphabet.  */
 #define NYQUISTEFFECTS_FAMILY ( EffectFamilySymbol{ XO("Nyquist") } )
+
+extern AUDACITY_DLL_API DoubleSetting EffectsPreviewLen;
 
 #endif

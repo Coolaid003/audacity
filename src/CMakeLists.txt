@@ -648,6 +648,22 @@ list( APPEND SOURCES
          effects/nyquist/LoadNyquist.h
          effects/nyquist/Nyquist.cpp
          effects/nyquist/Nyquist.h
+         effects/nyquist/NyquistControls.cpp
+         effects/nyquist/NyquistControls.h
+         effects/nyquist/NyquistEnvironment.cpp
+         effects/nyquist/NyquistEnvironment.h
+         effects/nyquist/NyquistFormatting.cpp
+         effects/nyquist/NyquistFormatting.h
+         effects/nyquist/NyquistParser.cpp
+         effects/nyquist/NyquistParser.h
+         effects/nyquist/NyquistProgram.cpp
+         effects/nyquist/NyquistProgram.h
+         effects/nyquist/NyquistPrompt.cpp
+         effects/nyquist/NyquistPrompt.h
+	 effects/nyquist/NyquistProperties.cpp
+	 effects/nyquist/NyquistProperties.h
+         effects/nyquist/NyquistUIControls.cpp
+         effects/nyquist/NyquistUIControls.h
       >
 
       # VAMP Effects
