@@ -180,9 +180,9 @@ class AUDACITY_DLL_API Effect /* not final */
 
    bool EnableApply(bool enable = true);
 
- protected:
-
    bool EnablePreview(bool enable = true);
+
+protected:
 
    //! Default implementation returns false
    bool CheckWhetherSkipEffect(const EffectSettings &settings) const override;
@@ -201,6 +201,7 @@ class AUDACITY_DLL_API Effect /* not final */
 
    // No more virtuals!
 
+public:
    // The Progress methods all return true if the user has cancelled;
    // you should exit immediately if this happens (cleaning up memory
    // is okay, but don't try to undo).
@@ -218,6 +219,7 @@ class AUDACITY_DLL_API Effect /* not final */
    bool TrackGroupProgress(
       int whichGroup, double frac, const TranslatableString & = {}) const;
 
+protected:
    int GetNumWaveTracks() const { return mNumTracks; }
    int GetNumWaveGroups() const { return mNumGroups; }
 
