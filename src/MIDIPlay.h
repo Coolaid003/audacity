@@ -13,6 +13,7 @@ Paul Licameli split from AudIOBase.h
 #define __AUDACITY_MIDI_PLAY__
 
 #include "AudioIOExt.h"
+#include <condition_variable>
 #include <optional>
 #include "../lib-src/header-substitutes/allegro.h"
 
@@ -29,6 +30,7 @@ using NoteTrackConstArray = std::vector < std::shared_ptr< const NoteTrack > >;
 
 #include "NoteTrack.h"
 #include "PlaybackSchedule.h"
+#include <forward_list>
 
 namespace {
 
@@ -41,30 +43,40 @@ struct Iterator {
    Iterator(
       const PlaybackSchedule &schedule, MIDIPlay &midiPlay,
       NoteTrackConstArray &midiPlaybackTracks,
-      double startTime, double offset, bool send );
+      double startTime, bool send );
    ~Iterator();
 
    void Prime(bool send, double startTime);
 
    double GetNextEventTime() const;
 
-   // Compute nondecreasing real time stamps, accounting for pauses, but not the
-   // synth latency.
-   double UncorrectedMidiEventTime(double pauseTime);
-
    bool Unmuted(bool hasSolo) const;
 
    // Returns true after outputting all-notes-off
-   bool OutputEvent(double pauseTime,
+   bool OutputEvent(double rawTime,
       /// when true, sendMidiState means send only updates, not note-ons,
       /// used to send state changes that precede the selected notes
       bool sendMidiState,
       bool hasSolo);
-   void GetNextEvent();
+   void GetNextEvent(
+      double limitTime = std::numeric_limits<double>::infinity());
+
+   // These may update future ending behavior of an iterator that is being used
+   // in another thread, so they use atomics to do that properly.
+   void SetNotesOffTime(double notesOffTime)
+   { mNotesOffTime.store(notesOffTime, std::memory_order_relaxed); }
+   void SetSkipping()
+   { mSkipping.store(true, std::memory_order_relaxed); }
+
+   // And, the corresponding accessors.
+   double GetNotesOffTime() const
+   { return mNotesOffTime.load(std::memory_order_relaxed); }
+   bool GetSkipping() const
+   { return mSkipping.load(std::memory_order_relaxed); }
 
    const PlaybackSchedule &mPlaybackSchedule;
    MIDIPlay &mMIDIPlay;
-   Alg_iterator it{ nullptr, false };
+   Alg_iterator it;
    /// The next event to play (or null)
    Alg_event    *mNextEvent = nullptr;
 
@@ -74,16 +86,32 @@ struct Iterator {
    /// Is the next event a note-on?
    bool             mNextIsNoteOn = false;
 
+   std::atomic<double> mNotesOffTime{ std::numeric_limits<double>::infinity() };
+   std::atomic<bool> mSkipping{ false };
+
+   bool             mFinished = false;
+
 private:
    /// Real time at which the next event should be output, measured in seconds.
    /// Note that this could be a note's time+duration for note offs.
    double           mNextEventTime = 0;
 };
 
-struct MIDIPlay : AudioIOExt
+struct MIDIPlay : AudioIOExt, NonInterferingBase
 {
    explicit MIDIPlay(const PlaybackSchedule &schedule);
    ~MIDIPlay() override;
+
+   void ForceShutdown(unsigned bit);
+   bool Shutdown(unsigned bit);
+
+   void Producer(std::pair<double, double> newTrackTimes,
+      size_t nFrames) override;
+
+   void Consumer(size_t nSamples, double rate, unsigned long pauseFrames,
+      bool hasSolo) override;
+
+   void Prime(double newTrackTime) override;
 
    double AudioTime(double rate) const
    { return mPlaybackSchedule.mT0 + mNumFrames / rate; }
@@ -91,11 +119,15 @@ struct MIDIPlay : AudioIOExt
    const PlaybackSchedule &mPlaybackSchedule;
    NoteTrackConstArray mMidiPlaybackTracks;
 
-   /// True when output reaches mT1
-   static bool      mMidiOutputComplete;
+   /// mMidiStreamActive tells when mMidiStream is open for output and not in process of shutdown
+   static std::atomic<bool> mMidiStreamActive;
 
-   /// mMidiStreamActive tells when mMidiStream is open for output
-   static bool      mMidiStreamActive;
+   /// Zero when the queue of events is inactive
+   static std::atomic<unsigned> mMidiOutputInProgress;
+
+   // Use a cv when changing the above
+   std::condition_variable mMidiOutputCompleteCV;
+   std::mutex mMidiOutputCompleteMutex;
 
    PmStream        *mMidiStream = nullptr;
    int              mLastPmError = 0;
@@ -107,12 +139,6 @@ struct MIDIPlay : AudioIOExt
 
    /// Number of frames output, including pauses
    long    mNumFrames = 0;
-   /// total of backward jumps
-   int     mMidiLoopPasses = 0;
-   //
-   inline double MidiLoopOffset() {
-      return mMidiLoopPasses * (mPlaybackSchedule.mT1 - mPlaybackSchedule.mT0);
-   }
 
    long    mAudioFramesPerBuffer = 0;
    /// Used by Midi process to record that pause has begun,
@@ -141,13 +167,68 @@ struct MIDIPlay : AudioIOExt
 
    double mSystemMinusAudioTimePlusLatency = 0.0;
 
-   std::optional<Iterator> mIterator;
-
 #ifdef AUDIO_IO_GB_MIDI_WORKAROUND
    std::vector< std::pair< int, int > > mPendingNotesOff;
 #endif
 
-   void PrepareMidiIterator(bool send, double startTime, double offset);
+   //! @name Inter-thread queue
+   //! @{
+
+   struct Entry {
+      Entry(double trackStartTime, double trackEndTime)
+         : trackStartTime{trackStartTime}, trackEndTime{trackEndTime}
+      {}
+
+      std::shared_ptr<Iterator> iterator;
+      double trackStartTime;
+      double trackEndTime;
+      size_t frames{ 0 };
+   };
+
+   //! Alignment size to avoid false sharing
+   static constexpr size_t alignment = 64;
+      //std::hardware_destructive_interference_size; // C++17
+
+   //! Counter type for entries to-do, done, and cleaned up
+   /*! If the counter type wraps during very long play, it won't matter, so long
+    as the number of entries in transit in the queue never exceeds the
+    largest value of the type. */
+   using CounterType = size_t;
+
+   //! Use a list container for its guarantees of non-invalidation of iterators
+   using Queue = std::forward_list<Entry>;
+   // The Queue object itself is changed only by main or producer thread
+   Queue mEntries;
+
+   //! Shared counter, updated by producer
+   alignas(alignment) std::atomic<CounterType> mEntriesProduced{0};
+   //! Shared counter, updated by consumer
+   std::atomic<CounterType> mEntriesConsumed{0};
+   //! @}
+
+   //! @name For Producer's use only
+   //! @{
+   alignas(alignment) Queue::iterator mToProduce;
+   //! unshared pointer to object that is shared in Entries:
+   std::shared_ptr<Iterator> mIterator;
+   CounterType mEntriesDestroyed{0};
+   bool mSentControls = false;
+   void ProduceCompleteEntry(Entry &entry, size_t frames,
+      double leftLimit, bool end, bool continuous);
+   void PrepareMidiIterator(bool send, double startTime);
+   //! @}
+
+   //! @name For Consumer's use only
+   //! @{
+   alignas(alignment) Queue::const_iterator mToConsume;
+   size_t mNextFrame = 0;
+   // Number of frames that have been consumed in one call of the Portaudio
+   // callback
+   size_t mCallbackFramesConsumed = 0;
+   size_t ConsumePartOfEntry(const Entry &entry,
+      size_t frames, size_t total, double rate, double audioTime, bool hasSolo);
+   //! @}
+
    bool StartPortMidiStream(double rate);
    double PauseTime(double rate, unsigned long pauseFrames);
    void AllNotesOff(bool looping = false);
@@ -172,11 +253,12 @@ struct MIDIPlay : AudioIOExt
    bool StartOtherStream(const TransportTracks &tracks,
       const PaStreamInfo* info, double startTime, double rate) override;
    void AbortOtherStream() override;
-   void FillOtherBuffers(double rate, unsigned long pauseFrames,
-      bool paused, bool hasSolo) override;
    void StopOtherStream() override;
+   void DestroyOtherStream() override;
 
    AudioIODiagnostics Dump() const override;
+
+   void ClearQueue();
 };
 
 }

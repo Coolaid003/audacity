@@ -75,7 +75,8 @@ class PlaybackPolicy {
 public:
    using Duration = std::chrono::duration<double>;
 
-   //! @section Called by the main thread
+   //! @name Called only by the main thread
+   //! @{
 
    virtual ~PlaybackPolicy() = 0;
 
@@ -96,8 +97,10 @@ public:
    };
    //! Provide hints for construction of playback RingBuffer objects
    virtual BufferTimes SuggestedBufferTimes(PlaybackSchedule &schedule);
+   //! @}
 
-   //! @section Called by the PortAudio callback thread
+   //! @name Called by the PortAudio callback thread
+   //! @{
 
    //! Whether repositioning commands are allowed during playback
    virtual bool AllowSeek( PlaybackSchedule &schedule );
@@ -112,8 +115,10 @@ public:
       @return the new value that will be set as the schedule's track time
     */
    virtual double OffsetTrackTime( PlaybackSchedule &schedule, double offset );
+   //! @}
 
-   //! @section Called by the AudioIO::TrackBufferExchange thread
+   //! @name Called by the AudioIO::TrackBufferExchange thread
+   //! @{
 
    //! How long to wait between calls to AudioIO::TrackBufferExchange
    virtual std::chrono::milliseconds
@@ -150,10 +155,7 @@ public:
       size_t frames, //!< how many samples were just now buffered for play
       size_t available //!< how many more samples may be buffered
    );
-
-   //! @section To be removed
-
-   virtual bool Looping( const PlaybackSchedule &schedule ) const;
+   //! @}
 
 protected:
    double mRate = 0;
@@ -192,7 +194,7 @@ struct AUDACITY_DLL_API PlaybackSchedule {
    const BoundedEnvelope *mEnvelope;
 
    //! A circular buffer
-   /*
+   /*!
     Holds track time values corresponding to every nth sample in the
     playback buffers, for the large n == TimeQueueGrainSize.
 
@@ -208,37 +210,50 @@ struct AUDACITY_DLL_API PlaybackSchedule {
     The consumer thread uses that information, and also makes known to the main
     thread, what the last consumed track time is.  The main thread can use that
     for other purposes such as refreshing the display of the play head position.
+
+    Producer and consumer also call back to AudioIOExt objects which might
+    manage additional queues of other information.
     */
    class TimeQueue {
    public:
-
-      //! @section called by main thread
-
+      //! @name Called only by the main thread
+      //! @{
       void Clear();
       void Resize(size_t size);
+      //! @}
 
-      //! @section Called by the AudioIO::TrackBufferExchange thread
+      //! @name Called by the AudioIO::TrackBufferExchange thread
+      //! @{
 
-      //! Enqueue track time value advanced by the slice according to `schedule`'s PlaybackPolicy
+      //! Enqueue track time values
+      /*! Time is advanced by `slice` according to `schedule`'s PlaybackPolicy
+       */
       void Producer( PlaybackSchedule &schedule, PlaybackSlice slice );
 
       //! Return the last time saved by Producer
       double GetLastTime() const;
 
       void SetLastTime(double time);
+      //! @}
 
-      //! @section called by PortAudio callback thread
+      //! @name Called by the PortAudio callback thread
+      //! @{
 
       //! Find the track time value `nSamples` after the last consumed sample
-      double Consumer( size_t nSamples, double rate );
+      double Consumer( size_t nSamples, double rate,
+         unsigned long pauseFrames, bool hasSolo );
+      //! @}
 
-      //! @section called by any thread while producer and consumer are suspended
-
+      //! @name Called by any thread while producer and consumer are suspended
+      //! @{
       //! Empty the queue and reassign the last produced time
       /*! Assumes producer and consumer are suspended */
       void Prime( double time );
+      //! @}
 
    private:
+      void ProduceExt(std::pair<double, double> newTrackTimes, size_t nFrames);
+
       struct Record {
          double timeValue;
          // More fields to come
@@ -358,8 +373,6 @@ public:
    bool RepositionPlayback(
       PlaybackSchedule &schedule, const Mixers &playbackMixers,
       size_t frames, size_t available ) override;
-
-   bool Looping( const PlaybackSchedule & ) const override;
 
 private:
    bool RevertToOldDefault( const PlaybackSchedule &schedule ) const;

@@ -341,16 +341,11 @@ Time (in seconds, = total_sample_count / sample_rate)
   play all control changes (update events) up to mT0, nor do we "undo"
   any state changes between mT0 and mT1.
 
-  \par NoteTrack PlayLooped Implementation
-  The mIterator object (an Alg_iterator) returns NULL when there are
-  no more events scheduled before mT1. At mT1, we want to output
-  all notes off messages, but the FillOtherBuffers() loop will exit
-  if mNextEvent is NULL, so we create a "fake" mNextEvent for this
-  special "event" of sending all notes off. After that, we destroy
-  the iterator and use PrepareMidiIterator() to set up a NEW one.
-  At each iteration, time must advance by (mT1 - mT0), so the
-  accumulated complete loop time (in "unwarped," track time) is computed
-  by MidiLoopOffset().
+  \par NoteTrack Implementation of discontinuous playback
+  When track time must jump relative to real time (such as when restarting
+  a loop, or cut preview play, or seeking), we create a "fake" mNextEvent for
+  sending all notes off. After that, the iterator is discarded and another prepared
+  iterator is used by the consumer thread.
 
 **********************************************************************/
 
@@ -505,8 +500,222 @@ static double SystemTime(bool usingAlsa)
    return util_GetTime() - streamStartTime;
 }
 
-bool MIDIPlay::mMidiStreamActive = false;
-bool MIDIPlay::mMidiOutputComplete = true;
+std::atomic<bool> MIDIPlay::mMidiStreamActive{ false };
+std::atomic<unsigned> MIDIPlay::mMidiOutputInProgress{ 0 };
+
+enum : unsigned { ConsumerBit = 1u, ProducerBit = 2u };
+
+void MIDIPlay::ForceShutdown(unsigned bit)
+{
+   // Must lock a mutex before notifying the associated condition variable.
+   // This may lock a mutex in the low-latency thread, which normally is
+   // undesirable, but this is shut-down of playback.  This may also be
+   // executed in the producer thread.
+   // May unblock the waiting main thread
+   std::unique_lock<std::mutex> lock{ mMidiOutputCompleteMutex };
+   auto oldValue = mMidiOutputInProgress.fetch_and(
+      ~bit, std::memory_order_relaxed);
+   if ((oldValue & bit))
+      // Kick the main thread on bit transition
+      mMidiOutputCompleteCV.notify_one();
+}
+
+bool MIDIPlay::Shutdown(unsigned bit)
+{
+   if (!mMidiStreamActive.load(std::memory_order_relaxed)) {
+      ForceShutdown(bit);
+      return true;
+   }
+   else
+      return false;
+}
+
+void MIDIPlay::Producer(std::pair<double, double> times, size_t frames)
+{
+   // If we get the shut-down signal from the main thread, don't produce more,
+   // so it it safe for the main thread to destroy the MIDI queue
+   if (Shutdown(ProducerBit))
+      return;
+
+   // Clean up for the consumer, so it can avoid memory management in the
+   // low-latency thread
+   auto nConsumed = mEntriesConsumed.load(std::memory_order_acquire);
+   // We have acquired the value of nConsumed, so side-effects of
+   // the consumption happened before here, and destruction of entries is safe
+   do {
+      for (; mEntriesDestroyed != nConsumed; ++mEntriesDestroyed)
+         mEntries.pop_front();
+   } // Repeat in case more consumption happened:
+   while ( !mEntriesConsumed.compare_exchange_weak(
+      nConsumed, nConsumed, std::memory_order_acquire ) );
+
+   // Fetch variable that only this producer writes
+   auto nProduced = mEntriesProduced.load(std::memory_order_relaxed);
+
+   const auto leftLimit = times.first;
+   const bool continuous = (leftLimit == times.second);
+   const bool end = !std::isfinite(times.second);
+   const auto rightLimit = end ? leftLimit : times.second;
+
+   // Assume the queue is not empty, which Prime() guarantees
+   auto &entry = *mToProduce;
+
+   // Complete the previous entry
+   ProduceCompleteEntry(entry, frames, leftLimit, end, continuous);
+
+   // Count completed entries
+   ++nProduced;
+
+   // Record new, but incomplete entry.
+   mToProduce = mEntries.emplace_after(mToProduce, rightLimit, rightLimit);
+
+   // Now let the consumer see the entry that was completed.
+   mEntriesProduced.store(nProduced, std::memory_order_release);
+}
+
+void MIDIPlay::ProduceCompleteEntry(Entry &entry, size_t frames,
+   double leftLimit, bool end, bool continuous)
+{
+   entry.frames = frames;
+
+   auto lastTime = entry.trackStartTime;
+   entry.trackEndTime = leftLimit;
+
+   // Share an iterator if we can with earlier slices.  Only in
+   // the case of forward play without discontinuity.
+   if (!mIterator) {
+      PrepareMidiIterator(
+         // Send initial update events from this thread only the first time the
+         // iterator is constructed:
+         !mSentControls,
+         lastTime);
+      mSentControls = true;
+   }
+   entry.iterator = mIterator;
+
+   // Following steps may update an iterator already used by the consumer.
+   if (end || !continuous) {
+      // Atomically shrink the notes-off time to a finite limit.
+      // A relaxed atomic update, but this is all right because if the consumer
+      // sees the finite limit before it sees the present Entry, then the
+      // earlier Entry has a trackEndTime that causes an earlier stop anyway.
+      mIterator->SetNotesOffTime(leftLimit);
+      if (!continuous) {
+         // We determine that the iterator must skip.
+         // Set that bool, also atomically.
+         mIterator->SetSkipping();
+         // can't share with the next
+         mIterator.reset();
+      }
+   }
+}
+
+void MIDIPlay::Consumer(
+   size_t frames, double rate, unsigned long pauseFrames, bool hasSolo)
+{
+   // If we get the shut-down signal from the main thread, don't send more
+   // events to Portmidi
+   if (Shutdown(ConsumerBit))
+      return;
+
+   // See whether there is new production, after producer's side-effects
+   auto nProduced = mEntriesProduced.load(std::memory_order_acquire);
+   // Fetch variable that only this consumer writes
+   auto nConsumed = mEntriesConsumed.load(std::memory_order_relaxed);
+
+   size_t total = 0;
+
+   // See ComputeOtherTimings, which completes for the present PortAudio
+   // callback before this point.
+   // So this is audio time AFTER the callback's batch of samples:
+   auto currentAudioTime = AudioTime(rate) + PauseTime(rate, pauseFrames);
+   // Adjust it to correspond with the beginning sample for this piece
+   auto audioTime = currentAudioTime
+      + ((double)mCallbackFramesConsumed - mAudioFramesPerBuffer) / rate;
+
+   do {
+      while (total < frames) {
+         if (nConsumed == nProduced)
+            break;
+         const auto &entry = *mToConsume;
+         if (mNextFrame >= entry.frames) {
+            mNextFrame = 0;
+            ++nConsumed;
+            ++mToConsume;
+            continue;
+         }
+
+         size_t used = ConsumePartOfEntry(entry,
+            frames, total, rate, audioTime, hasSolo);
+
+         mNextFrame += used;
+         total += used;
+         audioTime += used / rate;
+         mCallbackFramesConsumed += used;
+      }
+   }
+   // Repeat in case room remains and more production happened
+   // (Shouldn't happen if the queue has enough latency for the mismatch
+   // between producer and consumer frequency)
+   while (total < frames &&
+      !mEntriesProduced.compare_exchange_weak(
+      nProduced, nProduced, std::memory_order_acquire ) );
+
+   // Remember how many are consumed, and let producer clean them up
+   mEntriesConsumed.store(nConsumed, std::memory_order_release);
+}
+
+size_t MIDIPlay::ConsumePartOfEntry(const Entry &entry,
+   const size_t frames, const size_t total,
+   const double rate, const double audioTime, const bool hasSolo)
+{
+   const auto t0 = entry.trackStartTime;
+   const auto t1 = entry.trackEndTime;
+   const auto duration = t1 - t0;
+
+   const auto available = entry.frames - mNextFrame;
+   const auto used = std::min(frames - total, available);
+   if (const auto pIterator = entry.iterator) {
+      if (duration == 0)
+         // Do nothing
+         ;
+      else {
+         // Events are fetched always by ascending track time, but sent
+         // to PortMidi with associated time stamp that causes them to
+         // sort correctly even if we play backward.
+         // Even if playing forward, but at non-unit speed, there may also
+         // be some stretching of track times to actual elapsed time.
+         auto tlast =
+            t1 - duration * (entry.frames - mNextFrame) / entry.frames;
+         auto limitTime =
+            t1 - duration * (entry.frames - (mNextFrame + used))
+               / entry.frames;
+         double time;
+         while (pIterator->mNextEvent &&
+                (time = pIterator->GetNextEventTime()) < limitTime) {
+            auto rawTime = audioTime +
+               (entry.frames * (time - tlast) / duration) / rate;
+            pIterator->OutputEvent(rawTime, false, hasSolo);
+            pIterator->GetNextEvent(limitTime);
+         }
+      }
+   }
+   return used;
+}
+
+void MIDIPlay::Prime(double newTrackTime)
+{
+   if (!mEntries.empty() && mMidiStream)
+      // May come here while AudioIoCallback is seeking
+      AllNotesOff();
+
+   ClearQueue();
+
+   // Make an entry for the consumer's iterator to point at; it is not
+   // yet complete for consumption
+   mEntries.emplace_front(newTrackTime, newTrackTime);
+   mToConsume = mToProduce = mEntries.begin();
+}
 
 AudioIOExt::RegisteredFactory sMIDIPlayFactory{
    [](const auto &playbackSchedule){
@@ -603,6 +812,7 @@ bool MIDIPlay::StartOtherStream(const TransportTracks &tracks,
 
 void MIDIPlay::AbortOtherStream()
 {
+   ClearQueue();
    mMidiPlaybackTracks.clear();
 }
 
@@ -615,18 +825,19 @@ PmTimestamp MidiTime(void *pInfo)
 // Sends MIDI control changes up to the starting point mT0
 // if send is true. Output is delayed by offset to facilitate
 // looping (each iteration is delayed more).
-void MIDIPlay::PrepareMidiIterator(bool send, double startTime, double offset)
+void MIDIPlay::PrepareMidiIterator(bool send, double startTime)
 {
-   mIterator.emplace(mPlaybackSchedule, *this,
-      mMidiPlaybackTracks, startTime, offset, send);
+   mIterator = std::make_shared<Iterator>(mPlaybackSchedule, *this,
+      mMidiPlaybackTracks, startTime, send);
 }
 
 Iterator::Iterator(
    const PlaybackSchedule &schedule, MIDIPlay &midiPlay,
    NoteTrackConstArray &midiPlaybackTracks,
-   double startTime, double offset, bool send )
+   double startTime, bool send )
    : mPlaybackSchedule{ schedule }
    , mMIDIPlay{ midiPlay }
+   , it{ nullptr, false }
 {
    // instead of initializing with an Alg_seq, we use begin_seq()
    // below to add ALL Alg_seq's.
@@ -640,9 +851,9 @@ Iterator::Iterator(
       const void *cookie = t.get();
       it.begin_seq(seq,
          // casting away const, but allegro just uses the pointer opaquely
-         const_cast<void*>(cookie), t->GetOffset() + offset);
+         const_cast<void*>(cookie), t->GetOffset());
    }
-   Prime(send, startTime + offset);
+   Prime(send, startTime);
 }
 
 Iterator::~Iterator()
@@ -652,7 +863,7 @@ Iterator::~Iterator()
 
 void Iterator::Prime(bool send, double startTime)
 {
-   GetNextEvent(); // prime the pump for FillOtherBuffers
+   GetNextEvent();
 
    // Start MIDI from current cursor position
    while (mNextEvent &&
@@ -671,13 +882,34 @@ void Iterator::Prime(bool send, double startTime)
 
 double Iterator::GetNextEventTime() const
 {
-   if (mNextEvent == &gAllNotesOff)
-      return mNextEventTime - ALG_EPS;
-   return mNextEventTime;
+   if (mNextEvent == &gAllNotesOff) {
+      auto time = GetNotesOffTime();
+      if (std::isfinite(time))
+         time -= ALG_EPS;
+      return time;
+   }
+   else
+      return mNextEventTime;
+}
+
+void MIDIPlay::ClearQueue()
+{
+   mEntries = Queue{};
+   mToProduce = Queue::iterator{};
+   mToConsume = Queue::const_iterator{};
+   mEntriesProduced.store(0, std::memory_order_relaxed);
+   mEntriesConsumed.store(0, std::memory_order_relaxed);
+   mEntriesDestroyed = 0;
+   mNextFrame = 0;
+   mCallbackFramesConsumed = 0;
+   mIterator.reset();
+   mSentControls = false;
 }
 
 bool MIDIPlay::StartPortMidiStream(double rate)
 {
+   mSentControls = false;
+
 #ifdef __WXGTK__
    // Duplicating a bit of AudioIO::StartStream
    // Detect whether ALSA is the chosen host, and do the various involved MIDI
@@ -724,12 +956,11 @@ bool MIDIPlay::StartPortMidiStream(double rate)
                                 this, // supplies pInfo argument to MidiTime
                                 MIDI_MINIMAL_LATENCY_MS);
    if (mLastPmError == pmNoError) {
-      mMidiStreamActive = true;
+      mMidiStreamActive.store(true, std::memory_order_relaxed);
       mMidiPaused = false;
-      mMidiLoopPasses = 0;
-      mMidiOutputComplete = false;
+      mMidiOutputInProgress.store(
+         ProducerBit | ConsumerBit, std::memory_order_relaxed);
       mMaxMidiTimestamp = 0;
-      PrepareMidiIterator(true, mPlaybackSchedule.mT0, 0);
 
       // It is ok to call this now, but do not send timestamped midi
       // until after the first audio callback, which provides necessary
@@ -741,15 +972,40 @@ bool MIDIPlay::StartPortMidiStream(double rate)
 
 void MIDIPlay::StopOtherStream()
 {
-   if (mMidiStream && mMidiStreamActive) {
+   // Main thread
+   if (mMidiStream && mMidiStreamActive.load(std::memory_order_relaxed)) {
       /* Stop Midi playback */
-      mMidiStreamActive = false;
+      mMidiStreamActive.store(false, std::memory_order_relaxed);
 
-      mMidiOutputComplete = true;
+      // Detect consumer shut-down
+      {
+         std::unique_lock<std::mutex> lock{ mMidiOutputCompleteMutex };
+         mMidiOutputCompleteCV.wait(lock, []{
+            return !(mMidiOutputInProgress.load(std::memory_order_relaxed)
+                     & ConsumerBit);
+         });
+      }
+
+      // Stop notes promptly now
+      AllNotesOff();
+   }
+}
+
+void MIDIPlay::DestroyOtherStream()
+{
+   if (mMidiStream) {
+      // Wait for producer shut-down
+      {
+         std::unique_lock<std::mutex> lock{ mMidiOutputCompleteMutex };
+         mMidiOutputCompleteCV.wait(lock, []{
+            return !(mMidiOutputInProgress.load(std::memory_order_relaxed)
+                     & ProducerBit);
+         });
+      }
+
+      /* Now it's safe to destroy the queue in AbortOtherStream() */
 
       // now we can assume "ownership" of the mMidiStream
-      // if output in progress, send all off, etc.
-      AllNotesOff();
       // AllNotesOff() should be sufficient to stop everything, but
       // in Linux, if you Pm_Close() immediately, it looks like
       // messages are dropped. ALSA then seems to send All Sound Off
@@ -775,22 +1031,7 @@ void MIDIPlay::StopOtherStream()
       }
    }
 
-   mMidiPlaybackTracks.clear();
-}
-
-double Iterator::UncorrectedMidiEventTime(double pauseTime)
-{
-   double time;
-   if (mPlaybackSchedule.mEnvelope)
-      time =
-         mPlaybackSchedule.RealDuration(
-            GetNextEventTime() - mMIDIPlay.MidiLoopOffset())
-         + mPlaybackSchedule.mT0 +
-           (mMIDIPlay.mMidiLoopPasses * mPlaybackSchedule.mWarpedLength);
-   else
-      time = GetNextEventTime();
-
-   return time + pauseTime;
+   AbortOtherStream();
 }
 
 bool Iterator::Unmuted(bool hasSolo) const
@@ -804,17 +1045,15 @@ bool Iterator::Unmuted(bool hasSolo) const
    return !channelIsMute;
 }
 
-bool Iterator::OutputEvent(double pauseTime, bool midiStateOnly, bool hasSolo)
+bool Iterator::OutputEvent(double rawTime, bool midiStateOnly, bool hasSolo)
 {
    int channel = (mNextEvent->chan) & 0xF; // must be in [0..15]
    int command = -1;
    int data1 = -1;
    int data2 = -1;
 
-   double eventTime = UncorrectedMidiEventTime(pauseTime);
-
    // 0.0005 is for rounding
-   double time = eventTime + 0.0005 -
+   double time = rawTime + 0.0005 -
                  (mMIDIPlay.mSynthLatency * 0.001);
 
    time += 1; // MidiTime() has a 1s offset
@@ -828,8 +1067,7 @@ bool Iterator::OutputEvent(double pauseTime, bool midiStateOnly, bool hasSolo)
    // The special event gAllNotesOff means "end of playback, send
    // all notes off on all channels"
    if (mNextEvent == &gAllNotesOff) {
-      bool looping = mPlaybackSchedule.GetPolicy().Looping(mPlaybackSchedule);
-      mMIDIPlay.AllNotesOff(looping);
+      mMIDIPlay.AllNotesOff(GetSkipping());
       return true;
    }
 
@@ -966,64 +1204,36 @@ bool Iterator::OutputEvent(double pauseTime, bool midiStateOnly, bool hasSolo)
    return false;
 }
 
-void Iterator::GetNextEvent()
+void Iterator::GetNextEvent(double limitTime)
 {
    mNextEventTrack = nullptr; // clear it just to be safe
    // now get the next event and the track from which it came
    double nextOffset;
-   auto midiLoopOffset = mMIDIPlay.MidiLoopOffset();
    mNextEvent = it.next(&mNextIsNoteOn,
       // Allegro retrieves the "cookie" for the event, which is a NoteTrack
       reinterpret_cast<void **>(&mNextEventTrack),
-      &nextOffset, mPlaybackSchedule.mT1 + midiLoopOffset);
+      &nextOffset,
+      // Passing zero means Allegro does not limit the event time
+      0);
 
-   mNextEventTime  = mPlaybackSchedule.mT1 + midiLoopOffset + 1;
    if (mNextEvent) {
       mNextEventTime = (mNextIsNoteOn ? mNextEvent->time :
-                              mNextEvent->get_end_time()) + nextOffset;;
+                              mNextEvent->get_end_time()) + nextOffset;
    }
-   if (mNextEventTime > (mPlaybackSchedule.mT1 + midiLoopOffset)){ // terminate playback at mT1
-      mNextEvent = &gAllNotesOff;
-      mNextEventTime = mPlaybackSchedule.mT1 + midiLoopOffset;
-      mNextIsNoteOn = true; // do not look at duration
-   }
-}
 
-void MIDIPlay::FillOtherBuffers(
-   double rate, unsigned long pauseFrames, bool paused, bool hasSolo)
-{
-   if (!mMidiStream)
+   if (mNextEvent && mNextEventTime < limitTime)
       return;
 
-   // If not paused, fill buffers.
-   if (paused)
-      return;
+   if (!mNextEvent || mNextEventTime >= GetNotesOffTime()) {
+      if (mFinished)
+         mNextEvent = nullptr;
+      else {
+         mNextEvent = &gAllNotesOff;
+         mNextIsNoteOn = true; // do not look at duration
 
-   // If we compute until GetNextEventTime() > current audio time,
-   // we would have a built-in compute-ahead of mAudioOutLatency, and
-   // it's probably good to compute MIDI when we compute audio (so when
-   // we stop, both stop about the same time).
-   double time = AudioTime(rate); // compute to here
-   // But if mAudioOutLatency is very low, we might need some extra
-   // compute-ahead to deal with mSynthLatency or even this thread.
-   double actual_latency  = (MIDI_MINIMAL_LATENCY_MS + mSynthLatency) * 0.001;
-   if (actual_latency > mAudioOutLatency) {
-       time += actual_latency - mAudioOutLatency;
-   }
-   while (mIterator &&
-          mIterator->mNextEvent &&
-          mIterator->UncorrectedMidiEventTime(PauseTime(rate, pauseFrames)) < time) {
-      if (mIterator->OutputEvent(PauseTime(rate, pauseFrames), false, hasSolo)) {
-         if (mPlaybackSchedule.GetPolicy().Looping(mPlaybackSchedule)) {
-            // jump back to beginning of loop
-            ++mMidiLoopPasses;
-            PrepareMidiIterator(false, mPlaybackSchedule.mT0, MidiLoopOffset());
-         }
-         else
-            mIterator.reset();
+         // Don't send all-notes-off again
+         mFinished = true;
       }
-      else if (mIterator)
-         mIterator->GetNextEvent();
    }
 }
 
@@ -1119,6 +1329,12 @@ void MIDIPlay::ComputeOtherTimings(double rate, bool paused,
    unsigned long framesPerBuffer
    )
 {
+   // This function is visited only once, early, in each invocation of
+   // the Portaudio callback.
+
+   // Reset the counter of frames consumed within one PortAudio callback
+   mCallbackFramesConsumed = 0;
+
    if (mCallbackCount++ == 0) {
        // This is effectively mSystemMinusAudioTime when the buffer is empty:
        mStartTime = SystemTime(mUsingAlsa) - mPlaybackSchedule.mT0;
@@ -1199,13 +1415,21 @@ unsigned MIDIPlay::CountOtherSoloTracks() const
 
 void MIDIPlay::SignalOtherCompletion()
 {
-   mMidiOutputComplete = true;
+   // We're in the consumer's thread, and must stop because of exhaustion of
+   // the play region, not in response top events on the main thread.
+   ForceShutdown(ConsumerBit);
+   // Cause producer shutdown
+   mMidiStreamActive.store(false, std::memory_order_relaxed);
 }
 }
 
 bool MIDIPlay::IsActive()
 {
-   return ( mMidiStreamActive && !mMidiOutputComplete );
+   // Called by main thread but the answer is affected by other threads.
+   // Main thread timer event detects the transition to false and then finishes
+   // playback or recording.
+   return ( mMidiStreamActive.load(std::memory_order_relaxed) &&
+           mMidiOutputInProgress.load(std::memory_order_relaxed) );
 }
 
 bool MIDIPlay::IsOtherStreamActive() const

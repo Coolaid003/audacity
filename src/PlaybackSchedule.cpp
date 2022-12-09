@@ -10,7 +10,7 @@
 
 #include "PlaybackSchedule.h"
 
-#include "AudioIOBase.h"
+#include "AudioIOExtensions.h"
 #include "Envelope.h"
 #include "Mix.h"
 #include "Project.h"
@@ -138,11 +138,6 @@ bool PlaybackPolicy::RepositionPlayback(
    PlaybackSchedule &, const Mixers &, size_t, size_t)
 {
    return true;
-}
-
-bool PlaybackPolicy::Looping(const PlaybackSchedule &) const
-{
-   return false;
 }
 
 namespace {
@@ -397,11 +392,6 @@ bool NewDefaultPlaybackPolicy::RepositionPlayback(
    return false;
 }
 
-bool NewDefaultPlaybackPolicy::Looping( const PlaybackSchedule & ) const
-{
-   return mLoopEnabled;
-}
-
 void NewDefaultPlaybackPolicy::OnPlayRegionChange(Observer::Message)
 {
    // This executes in the main thread
@@ -565,6 +555,7 @@ void PlaybackSchedule::TimeQueue::Producer(
       time = times.second;
       if (!std::isfinite(time))
          time = times.first;
+      ProduceExt(times, space);
       index = (index + 1) % size;
       mData[ index ].timeValue = time;
       frames -= space;
@@ -577,6 +568,7 @@ void PlaybackSchedule::TimeQueue::Producer(
       time = times.second;
       if (!std::isfinite(time))
          time = times.first;
+      ProduceExt(times, frames);
       remainder += frames;
       space -= frames;
    }
@@ -584,12 +576,14 @@ void PlaybackSchedule::TimeQueue::Producer(
    // Produce constant times if there is also some silence in the slice
    frames = slice.frames - slice.toProduce;
    while ( frames > 0 && frames >= space ) {
+      ProduceExt({time, time}, space);
       index = (index + 1) % size;
       mData[ index ].timeValue = time;
       frames -= space;
       remainder = 0;
       space = TimeQueueGrainSize;
    }
+   ProduceExt({time, time}, frames);
 
    mLastTime = time;
    mTail.mRemainder = remainder + frames;
@@ -606,11 +600,20 @@ void PlaybackSchedule::TimeQueue::SetLastTime(double time)
    mLastTime = time;
 }
 
-double PlaybackSchedule::TimeQueue::Consumer( size_t nSamples, double rate )
+double PlaybackSchedule::TimeQueue::Consumer(
+   size_t nSamples, double rate, unsigned long pauseFrames, bool hasSolo)
 {
    if ( mData.empty() ) {
       // Recording only.  No scrub or playback time warp.  Don't use the queue.
       return ( mLastTime += nSamples / rate );
+   }
+
+   {
+      // Assume initialization of AudioIO precedes any use of this
+      auto *pExtensions = AudioIOExtensions::Get();
+      wxASSERT(pExtensions);
+      for (auto &ext : pExtensions->Extensions())
+         ext.Consumer(nSamples, rate, pauseFrames, hasSolo);
    }
 
    // Don't check available space:  assume it is enough because of coordination
@@ -631,10 +634,28 @@ double PlaybackSchedule::TimeQueue::Consumer( size_t nSamples, double rate )
    return mData[ mHead.mIndex ].timeValue;
 }
 
-void PlaybackSchedule::TimeQueue::Prime(double time)
+void PlaybackSchedule::TimeQueue::Prime(double timeValue)
 {
-   mHead = mTail = {};
-   mLastTime = time;
+   // Assume initialization of AudioIO precedes any use of this
+   auto *pExtensions = AudioIOExtensions::Get();
+   wxASSERT(pExtensions);
+
+   mHead = {};
+   mTail = {};
+   mLastTime = timeValue;
    if ( !mData.empty() )
-      mData[0].timeValue = time;
+      mData[0].timeValue = timeValue;
+   for (auto &ext : pExtensions->Extensions())
+      ext.Prime(timeValue);
+}
+
+void PlaybackSchedule::TimeQueue::ProduceExt(
+   std::pair<double, double> newTrackTimes, size_t nFrames)
+{
+   // Assume initialization of AudioIO precedes any use of this
+   auto *pExtensions = AudioIOExtensions::Get();
+   wxASSERT(pExtensions);
+
+   for (auto &ext : pExtensions->Extensions())
+      ext.Producer(newTrackTimes, nFrames);
 }
