@@ -176,6 +176,9 @@ different formats.
 #include "Theme.h"
 #include "wxWidgetsWindowPlacement.h"
 
+#include "BasicMenu.h"
+#include "wxWidgetsWindowPlacement.h"
+
 #include <algorithm>
 #include <math.h>
 #include <limits>
@@ -185,9 +188,6 @@ different formats.
 #include <wx/wx.h>
 #include <wx/dcbuffer.h>
 #include <wx/font.h>
-#include <wx/intl.h>
-#include <wx/menu.h>
-#include <wx/sizer.h>
 #include <wx/stattext.h>
 #include <wx/tooltip.h>
 #include <wx/toplevel.h>
@@ -1332,8 +1332,6 @@ void NumericConverter::Adjust(int steps, int dir)
    ControlsToValue();
 }
 
-#define ID_MENU 9800
-
 // Custom events
 
 DEFINE_EVENT_TYPE(EVT_TIMETEXTCTRL_UPDATED)
@@ -1754,27 +1752,27 @@ void NumericTextCtrl::OnPaint(wxPaintEvent & WXUNUSED(event))
 
 void NumericTextCtrl::OnContext(wxContextMenuEvent &event)
 {
-   wxMenu menu;
-   int i;
-
    if (!mMenuEnabled) {
       event.Skip();
       return;
    }
 
+   BasicMenu::Handle menu{ BasicMenu::FreshMenu };
+
    SetFocus();
 
    int currentSelection = -1;
-   for (i = 0; i < GetNumBuiltins(); i++) {
-      menu.AppendRadioItem(ID_MENU + i, GetBuiltinName(i).Translation());
-      if (mFormatString == GetBuiltinFormat(i)) {
-         menu.Check(ID_MENU + i, true);
+   for (int i = 0; i < GetNumBuiltins(); ++i) {
+      bool checked = (mFormatString == GetBuiltinFormat(i));
+      menu.AppendRadioItem(
+         GetBuiltinName(i).Msgid(),
+         {}, // Buttons do nothing immediately:  but see loop below
+         { true, checked } );
+      if ( checked )
          currentSelection = i;
-      }
    }
 
-   menu.Bind(wxEVT_MENU, [](auto&){});
-   BasicMenu::Handle{ &menu }.Popup(
+   menu.Popup(
       wxWidgetsWindowPlacement{ this },
       { 0, 0 }
    );
@@ -1784,8 +1782,10 @@ void NumericTextCtrl::OnContext(wxContextMenuEvent &event)
    // user happens to check the first menuitem and then is 
    // moving down the menu when the ...CTRL_UPDATED event
    // handler kicks in.
-   for (i = 0; i < GetNumBuiltins(); i++) {
-      if (menu.IsChecked(ID_MENU + i) && i != currentSelection) {
+   int i = -1;
+   for (const auto &item : menu) {
+      ++i;
+      if (item.state.checked && i != currentSelection) {
          SetFormatString(GetBuiltinFormat(i));
       
          int eventType = 0;

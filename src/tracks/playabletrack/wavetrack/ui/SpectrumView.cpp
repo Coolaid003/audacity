@@ -935,7 +935,7 @@ struct SpectrogramSettingsHandler : PopupMenuHandler {
       return instance;
    }
 
-   void OnSpectrogramSettings(wxCommandEvent &);
+   void OnSpectrogramSettings();
 
    void InitUserData(void *pUserData) override
    {
@@ -943,7 +943,7 @@ struct SpectrogramSettingsHandler : PopupMenuHandler {
    }
 };
 
-void SpectrogramSettingsHandler::OnSpectrogramSettings(wxCommandEvent &)
+void SpectrogramSettingsHandler::OnSpectrogramSettings()
 {
    class ViewSettingsDialog final : public PrefsDialog
    {
@@ -1032,14 +1032,14 @@ PopupMenuTable::AttachedItem sAttachment{
                   Entry::Item,
                   OnSpectrogramSettingsID,
                   XXO("S&pectrogram Settings..."),
-                  (wxCommandEventFunction)
-                     (&SpectrogramSettingsHandler::OnSpectrogramSettings),
+                  []{ SpectrogramSettingsHandler::Instance()
+                     .OnSpectrogramSettings(); },
                   SpectrogramSettingsHandler::Instance(),
-                  []( PopupMenuHandler &handler, wxMenu &menu, int id ){
+                  []{
                      // Bug 1253.  Shouldn't open preferences if audio is busy.
                      // We can't change them on the fly yet anyway.
                      auto gAudioIO = AudioIOBase::Get();
-                     menu.Enable(id, !gAudioIO->IsBusy());
+                     return !gAudioIO->IsBusy();
                   } );
             else
                return nullptr;

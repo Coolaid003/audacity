@@ -36,8 +36,6 @@ It handles initialization and termination by subclassing wxApp.
 #include <wx/event.h>
 #include <wx/ipc.h>
 #include <wx/window.h>
-#include <wx/intl.h>
-#include <wx/menu.h>
 #include <wx/snglinst.h>
 #include <wx/splash.h>
 #include <wx/stdpaths.h>
@@ -118,6 +116,7 @@ It handles initialization and termination by subclassing wxApp.
 #include "tracks/ui/Scrubbing.h"
 #include "FileConfig.h"
 #include "widgets/FileHistory.h"
+#include "widgets/BasicMenu.h"
 #include "widgets/wxWidgetsBasicUI.h"
 #include "LogWindow.h"
 #include "FrameStatisticsDialog.h"
@@ -952,88 +951,12 @@ BEGIN_EVENT_TABLE(AudacityApp, wxApp)
    EVT_SOCKET(ID_IPC_SOCKET, AudacityApp::OnSocketEvent)
 #endif
 
-   // Recent file event handlers.
-   EVT_MENU(FileHistory::ID_RECENT_CLEAR, AudacityApp::OnMRUClear)
-   EVT_MENU_RANGE(FileHistory::ID_RECENT_FIRST, FileHistory::ID_RECENT_LAST,
-      AudacityApp::OnMRUFile)
-
    // Handle AppCommandEvents (usually from a script)
    EVT_APP_COMMAND(wxID_ANY, AudacityApp::OnReceiveCommand)
 
    // Global ESC key handling
    EVT_KEY_DOWN(AudacityApp::OnKeyDown)
 END_EVENT_TABLE()
-
-// backend for OnMRUFile
-// TODO: Would be nice to make this handle not opening a file with more panache.
-//  - Inform the user if DefaultOpenPath not set.
-//  - Switch focus to correct instance of project window, if already open.
-bool AudacityApp::MRUOpen(const FilePath &fullPathStr) {
-   // Most of the checks below are copied from ProjectManager::OpenFiles.
-   // - some rationalisation might be possible.
-
-   auto pProj = GetActiveProject().lock();
-   auto proj = pProj.get();
-
-   if (!fullPathStr.empty())
-   {
-      // verify that the file exists
-      if (wxFile::Exists(fullPathStr))
-      {
-         FileNames::UpdateDefaultPath(FileNames::Operation::Open, ::wxPathOnly(fullPathStr));
-
-         // Make sure it isn't already open.
-         // Test here even though AudacityProject::OpenFile() also now checks, because
-         // that method does not return the bad result.
-         // That itself may be a FIXME.
-         if (ProjectFileManager::IsAlreadyOpen(fullPathStr))
-            return false;
-
-         //! proj may be null
-         ( void ) ProjectManager::OpenProject( proj, fullPathStr,
-               true /* addtohistory */, false /* reuseNonemptyProject */ );
-      }
-      else {
-         // File doesn't exist - remove file from history
-         AudacityMessageBox(
-            XO(
-"%s could not be found.\n\nIt has been removed from the list of recent files.")
-               .Format(fullPathStr) );
-         return(false);
-      }
-   }
-   return(true);
-}
-
-bool AudacityApp::SafeMRUOpen(const wxString &fullPathStr)
-{
-   return GuardedCall< bool >( [&]{ return MRUOpen( fullPathStr ); } );
-}
-
-void AudacityApp::OnMRUClear(wxCommandEvent& WXUNUSED(event))
-{
-   FileHistory::Global().Clear();
-}
-
-//vvv Basically, anything from Recent Files is treated as a .aup3, until proven otherwise,
-// then it tries to Import(). Very questionable handling, imo.
-// Better, for example, to check the file type early on.
-void AudacityApp::OnMRUFile(wxCommandEvent& event) {
-   int n = event.GetId() - FileHistory::ID_RECENT_FIRST;
-   auto &history = FileHistory::Global();
-   const auto &fullPathStr = history[ n ];
-
-   // Try to open only if not already open.
-   // Test IsAlreadyOpen() here even though AudacityProject::MRUOpen() also now checks,
-   // because we don't want to Remove() just because it already exists,
-   // and AudacityApp::OnMacOpenFile() calls MRUOpen() directly.
-   // that method does not return the bad result.
-   // PRL: Don't call SafeMRUOpen
-   // -- if open fails for some exceptional reason of resource exhaustion that
-   // the user can correct, leave the file in history.
-   if (!ProjectFileManager::IsAlreadyOpen(fullPathStr) && !MRUOpen(fullPathStr))
-      history.Remove(n);
-}
 
 void AudacityApp::OnTimer(wxTimerEvent& WXUNUSED(event))
 {
@@ -1083,7 +1006,7 @@ void AudacityApp::OnTimer(wxTimerEvent& WXUNUSED(event))
             //      to the config file has occurred.
             // PRL: Catch any exceptions, don't try this file again, continue to
             // other files.
-            if (!SafeMRUOpen(name)) {
+            if (!ProjectManager::SafeMRUOpen(name)) {
                // Just log it.  Assertion failure is not appropriate on valid
                // defensive path against bad file data.
                wxLogMessage(wxT("MRUOpen failed"));
@@ -1494,26 +1417,24 @@ bool AudacityApp::InitPart2()
       // On the Mac, users don't expect a program to quit when you close the last window.
       // Create a menubar that will show when all project windows are closed.
 
-      auto fileMenu = std::make_unique<wxMenu>();
-      auto urecentMenu = std::make_unique<wxMenu>();
-      auto recentMenu = urecentMenu.get();
-      fileMenu->Append(wxID_NEW, wxString(_("&New")) + wxT("\tCtrl+N"));
-      fileMenu->Append(wxID_OPEN, wxString(_("&Open...")) + wxT("\tCtrl+O"));
-      fileMenu->AppendSubMenu(urecentMenu.release(), _("Open &Recent..."));
-      fileMenu->Append(wxID_ABOUT, _("&About Audacity..."));
-      fileMenu->Append(wxID_PREFERENCES, wxString(_("&Preferences...")) + wxT("\tCtrl+,"));
+      BasicMenu::Handle fileMenu{ BasicMenu::FreshMenu };
+      BasicMenu::Handle recentMenu{ BasicMenu::FreshMenu };
+      fileMenu.Append({ XXO("&New"), "Ctrl+N" }, {}, {}, wxID_NEW );
+      fileMenu.Append({ XXO("&Open..."), "Ctrl+O" }, {}, {}, wxID_OPEN );
+      fileMenu.AppendSubMenu(std::move( recentMenu ), XXO("Open &Recent..."));
+      fileMenu.Append(XXO("&About Audacity..."), {}, {}, wxID_ABOUT);
+      fileMenu.Append({ XXO("&Preferences..."), "Ctrl+," }, {}, {}, wxID_PREFERENCES );
 
       {
-         auto menuBar = std::make_unique<wxMenuBar>();
-         menuBar->Append(fileMenu.release(), _("&File"));
+         BasicMenu::BarHandle menuBar{ BasicMenu::FreshMenu };
+         menuBar.Append( std::move( fileMenu ), XXO("&File"));
 
          // PRL:  Are we sure wxWindows will not leak this menuBar?
          // The online documentation is not explicit.
-         wxMenuBar::MacSetCommonMenuBar(menuBar.release());
+         BasicMenu::BarHandle::MacSetCommonMenuBar( std::move( menuBar ) );
       }
 
-      auto &recentFiles = FileHistory::Global();
-      recentFiles.UseMenu(recentMenu);
+      ProjectManager::UseMenu(recentMenu);
 
 #endif //__WXMAC__
       temporarywindow.Show(false);
@@ -1605,7 +1526,7 @@ bool AudacityApp::InitPart2()
          {
             // PRL: Catch any exceptions, don't try this file again, continue to
             // other files.
-            SafeMRUOpen(parser->GetParam(i));
+            ProjectManager::SafeMRUOpen(parser->GetParam(i));
          }
 
          if(!failedPlugins.empty())

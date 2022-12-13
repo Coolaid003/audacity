@@ -26,14 +26,18 @@
 
 #include <vector>
 
+#include "../widgets/BasicMenu.h"
 #include "XMLTagHandler.h"
 
 #include <unordered_map>
 
 class wxEvent;
-class wxMenu;
-class wxMenuBar;
 using CommandParameter = CommandID;
+
+namespace BasicMenu {
+   class Handle;
+   class BarHandle;
+}
 
 class BoolSetting;
 
@@ -86,9 +90,9 @@ class AUDACITY_DLL_API CommandManager final
    // Creating menus and adding commands
    //
 
-   std::unique_ptr<wxMenuBar> AddMenuBar(const wxString & sMenu);
+   BasicMenu::BarHandle AddMenuBar(const wxString & sMenu);
 
-   wxMenu *BeginMenu(const TranslatableString & tName);
+   BasicMenu::Handle BeginMenu(const BasicMenu::Item::Text & text);
    void EndMenu();
 
    // type of a function that determines checkmark state
@@ -165,7 +169,10 @@ class AUDACITY_DLL_API CommandManager final
          MakeCheckFn( const BoolSetting &setting );
    };
 
-   void AddItemList(const CommandID & name,
+   void MenuItemCallback(AudacityProject &project, int ID);
+
+   void AddItemList(AudacityProject &project,
+                    const CommandID & name,
                     const ComponentInterfaceSymbol items[],
                     size_t nItems,
                     CommandHandlerFinder finder,
@@ -175,7 +182,7 @@ class AUDACITY_DLL_API CommandManager final
 
    void AddItem(AudacityProject &project,
                 const CommandID & name,
-                const TranslatableString &label_in,
+                BasicMenu::Item::Text text,
                 CommandHandlerFinder finder,
                 CommandFunctorPointer callback,
                 CommandFlag flags,
@@ -183,7 +190,6 @@ class AUDACITY_DLL_API CommandManager final
 
    void AddSeparator();
 
-   void PopMenuBar();
    void BeginOccultCommands();
    void EndOccultCommands();
 
@@ -248,7 +254,7 @@ class AUDACITY_DLL_API CommandManager final
 #endif
       bool includeMultis);
 
-   // Each command is assigned a numerical ID for use in wxMenu and wxEvent,
+   // Each command is assigned a numerical ID for use in BasicMenu::Handle,
    // which need not be the same across platforms or sessions
    CommandID GetNameFromNumericID( int id );
 
@@ -292,8 +298,8 @@ private:
 
    int NextIdentifier(int ID);
    CommandListEntry *NewIdentifier(const CommandID & name,
-                                   const TranslatableString & label,
-                                   wxMenu *menu,
+                                   const BasicMenu::Item::Text & text,
+                                   BasicMenu::Handle menu,
                                    CommandHandlerFinder finder,
                                    CommandFunctorPointer callback,
                                    const CommandID &nameSuffix,
@@ -302,7 +308,7 @@ private:
                                    const Options &options);
    
    void AddGlobalCommand(const CommandID &name,
-                         const TranslatableString &label,
+                         const BasicMenu::Item::Text &text,
                          CommandHandlerFinder finder,
                          CommandFunctorPointer callback,
                          const Options &options = {});
@@ -321,20 +327,24 @@ private:
    //
 
    void Enable(CommandListEntry *entry, bool enabled);
-   wxMenu *BeginMainMenu(const TranslatableString & tName);
+   BasicMenu::Handle BeginMainMenu(const BasicMenu::Item::Text & text);
    void EndMainMenu();
-   wxMenu* BeginSubMenu(const TranslatableString & tName);
+   BasicMenu::Handle BeginSubMenu(const BasicMenu::Item::Text & text);
    void EndSubMenu();
 
    //
    // Accessing
    //
 
-   wxMenuBar * CurrentMenuBar() const;
-   wxMenuBar * GetMenuBar(const wxString & sMenu) const;
-   wxMenu * CurrentSubMenu() const;
+private:
+   void PushMenuBar( const wxString &sMenu );
+   void PopMenuBar();
+   BasicMenu::BarHandle CurrentMenuBar() const;
+   BasicMenu::BarHandle GetMenuBar(const wxString & sMenu) const;
+   BasicMenu::Handle CurrentSubMenu() const;
+
 public:
-   wxMenu * CurrentMenu() const;
+   BasicMenu::Handle CurrentMenu() const;
 
    void UpdateCheckmarks( AudacityProject &project );
 
@@ -343,15 +353,14 @@ public:
     @param pLabel if not null, use this instead of the manager's
     stored label
     */
-   wxString FormatLabelForMenu(
+   BasicMenu::Item::Label FormatLabelForMenu(
       const CommandID &id, const TranslatableString *pLabel) const;
 
 private:
-   wxString FormatLabelForMenu(const CommandListEntry *entry) const;
-   wxString FormatLabelForMenu(
-      const TranslatableString &translatableLabel,
-      const NormalizedKeyString &keyStr) const;
-   wxString FormatLabelWithDisabledAccel(const CommandListEntry *entry) const;
+   BasicMenu::Item::Label
+      FormatLabelForMenu(const CommandListEntry *entry) const;
+   BasicMenu::Item::Label FormatLabelWithDisabledAccel(
+      const CommandListEntry *entry) const;
 
    //
    // Loading/Saving
@@ -377,14 +386,12 @@ private:
 
    bool mbSeparatorAllowed; // false at the start of a menu and immediately after a separator.
 
-   TranslatableString mCurrentMenuName;
    TranslatableString mNiceName;
    int mLastProcessId;
-   std::unique_ptr<wxMenu> uCurrentMenu;
-   wxMenu *mCurrentMenu {};
+   BasicMenu::Item::Text mCurrentMenuText;
+   const std::unique_ptr<BasicMenu::Handle> uCurrentMenu;
 
    bool bMakingOccultCommands;
-   std::unique_ptr< wxMenuBar > mTempMenuBar;
 };
 
 struct AUDACITY_DLL_API MenuVisitor : Registry::Visitor
@@ -434,18 +441,18 @@ namespace MenuTable {
       // Construction from an internal name and a previously built-up
       // vector of pointers
       MenuItem( const Identifier &internalName,
-         const TranslatableString &title_, BaseItemPtrs &&items_ );
+         const BasicMenu::Item::Text &text, BaseItemPtrs &&items_ );
       // In-line, variadic constructor that doesn't require building a vector
       template< typename... Args >
          MenuItem( const Identifier &internalName,
-            const TranslatableString &title_, Args&&... args )
+            const BasicMenu::Item::Text &text, Args&&... args )
             : ConcreteGroupItem< false, ToolbarMenuVisitor >{
                internalName, std::forward<Args>(args)... }
-            , title{ title_ }
+            , text{ text }
          {}
       ~MenuItem() override;
 
-      TranslatableString title;
+      BasicMenu::Item::Text text;
    };
 
    // Collects other items that are conditionally shown or hidden, but are
@@ -500,7 +507,7 @@ namespace MenuTable {
    // Describes one command in a menu
    struct AUDACITY_DLL_API CommandItem final : SingleItem {
       CommandItem(const CommandID &name_,
-               const TranslatableString &label_in_,
+               const BasicMenu::Item::Text &text,
                CommandFunctorPointer callback_,
                CommandFlag flags_,
                const CommandManager::Options &options_,
@@ -513,12 +520,12 @@ namespace MenuTable {
        */
       template< typename Handler >
       CommandItem(const CommandID &name_,
-               const TranslatableString &label_in_,
+               const BasicMenu::Item::Text &text,
                void (Handler::*pmf)(const CommandContext&),
                CommandFlag flags_,
                const CommandManager::Options &options_,
                CommandHandlerFinder finder = FinderScope::DefaultFinder())
-         : CommandItem(name_, label_in_,
+         : CommandItem(name_, text,
             CommandFunctorPointer{
                static_cast<CommandFunctorPointer::MemberFn>(pmf) },
             flags_, options_, finder)
@@ -538,7 +545,7 @@ namespace MenuTable {
    
       ~CommandItem() override;
 
-      const TranslatableString label_in;
+      const BasicMenu::Item::Text text;
       CommandHandlerFinder finder;
       CommandFunctorPointer callback;
       CommandFlag flags;
@@ -599,7 +606,8 @@ namespace MenuTable {
    // adding any number of items, not using the CommandManager
    struct SpecialItem final : SingleItem
    {
-      using Appender = std::function< void( AudacityProject&, wxMenu& ) >;
+      using Appender =
+         std::function< void( AudacityProject&, BasicMenu::Handle ) >;
 
       explicit SpecialItem( const Identifier &internalName, const Appender &fn_ )
       : SingleItem{ internalName }
@@ -656,13 +664,15 @@ namespace MenuTable {
    // by path.
    template< typename... Args >
    inline std::unique_ptr<MenuItem> Menu(
-      const Identifier &internalName, const TranslatableString &title, Args&&... args )
+      const Identifier &internalName,
+      const BasicMenu::Item::Text &text, Args&&... args )
          { return std::make_unique<MenuItem>(
-            internalName, title, std::forward<Args>(args)... ); }
+            internalName, text, std::forward<Args>(args)... ); }
    inline std::unique_ptr<MenuItem> Menu(
-      const Identifier &internalName, const TranslatableString &title, BaseItemPtrs &&items )
+      const Identifier &internalName,
+      const BasicMenu::Item::Text &text, BaseItemPtrs &&items )
          { return std::make_unique<MenuItem>(
-            internalName, title, std::move( items ) ); }
+            internalName, text, std::move( items ) ); }
 
    // Conditional group items can be constructed two ways, as for group items
    // These items register in the CommandManager but are not shown in menus
@@ -712,14 +722,14 @@ namespace MenuTable {
    template< typename Handler >
    inline std::unique_ptr<CommandItem> Command(
       const CommandID &name,
-      const TranslatableString &label_in,
+      const BasicMenu::Item::Text &text,
       void (Handler::*pmf)(const CommandContext&),
       CommandFlag flags, const CommandManager::Options &options = {},
       CommandHandlerFinder finder = FinderScope::DefaultFinder())
    {
       assert(finder);
       return std::make_unique<CommandItem>(
-         name, label_in, pmf, flags, options, finder
+         name, text, pmf, flags, options, finder
       );
    }
 

@@ -92,8 +92,8 @@ public:
    static TrackMenuTable &Instance();
 
 private:
-   void OnSetName(wxCommandEvent &);
-   void OnMoveTrack(wxCommandEvent &event);
+   void OnSetName();
+   void OnMoveTrack(TrackUtilities::MoveChoice choice);
 
    void InitUserData(void *pUserData) override;
 
@@ -118,13 +118,13 @@ void TrackMenuTable::InitUserData(void *pUserData)
 }
 
 BEGIN_POPUP_MENU(TrackMenuTable)
-   static const auto enableIfCanMove = [](bool up){ return
-      [up]( PopupMenuHandler &handler, wxMenu &menu, int id ){
-         auto pData = static_cast<TrackMenuTable&>( handler ).mpData;
-         const auto &tracks = TrackList::Get( pData->project );
-         Track *const pTrack = pData->pTrack;
-         menu.Enable( id,
-            up ? tracks.CanMoveUp(pTrack) : tracks.CanMoveDown(pTrack) );
+   // A function that returns a function
+   static const auto canMove = [this](bool up) {
+      return [this, up]{
+         const auto &tracks = TrackList::Get( mpData->project );
+         Track *const pTrack = mpData->pTrack;
+         return
+            up ? tracks.CanMoveUp(pTrack) : tracks.CanMoveDown(pTrack);
       };
    };
 
@@ -137,44 +137,32 @@ BEGIN_POPUP_MENU(TrackMenuTable)
          // wxWidgets will apply its equivalent to the key names passed to menu
          // functions.
          OnMoveUpID,
-         XXO("Move Track &Up").Join(
-            Verbatim(
-               CommandManager::Get( mpData->project ).
-                   // using GET to compose menu item name for wxWidgets
-                   GetKeyFromName(wxT("TrackMoveUp")).GET() ),
-             wxT("\t")
-         ),
-         POPUP_MENU_FN( OnMoveTrack ), enableIfCanMove(true) );
+         { XXO("Move Track &Up"),
+            CommandManager::Get( mpData->project ).
+               GetKeyFromName(L"TrackMoveUp") },
+         [this]{ OnMoveTrack(TrackUtilities::OnMoveUpID); },
+         canMove(true) );
       AppendItem( "Down",
          OnMoveDownID,
-         XXO("Move Track &Down").Join(
-            Verbatim(
-               CommandManager::Get( mpData->project ).
-                  // using GET to compose menu item name for wxWidgets
-                  GetKeyFromName(wxT("TrackMoveDown")).GET() ),
-             wxT("\t")
-         ),
-         POPUP_MENU_FN( OnMoveTrack ), enableIfCanMove(false) );
+         { XXO("Move Track &Down"),
+            CommandManager::Get( mpData->project ).
+               GetKeyFromName(L"TrackMoveDown") },
+                 [this]{ OnMoveTrack(TrackUtilities::OnMoveDownID); },
+         canMove(false) );
       AppendItem( "Top",
          OnMoveTopID,
-         XXO("Move Track to &Top").Join(
-            Verbatim(
-               CommandManager::Get( mpData->project ).
-                   // using GET to compose menu item name for wxWidgets
-                   GetKeyFromName(wxT("TrackMoveTop")).GET() ),
-             wxT("\t")
-         ),
-         POPUP_MENU_FN( OnMoveTrack ), enableIfCanMove(true) );
+         { XXO("Move Track to &Top"),
+            CommandManager::Get( mpData->project ).
+               GetKeyFromName(L"TrackMoveTop") },
+                 [this]{ OnMoveTrack(TrackUtilities::OnMoveTopID); },
+         canMove(true) );
       AppendItem( "Bottom",
          OnMoveBottomID,
-         XXO("Move Track to &Bottom").Join(
-            Verbatim(
-               CommandManager::Get( mpData->project ).
-                  // using GET to compose menu item name for wxWidgets
-                  GetKeyFromName(wxT("TrackMoveBottom")).GET() ),
-             wxT("\t")
-         ),
-         POPUP_MENU_FN( OnMoveTrack ), enableIfCanMove(false) );
+         { XXO("Move Track to &Bottom"),
+            CommandManager::Get( mpData->project ).
+               GetKeyFromName(L"TrackMoveBottom") },
+                 [this]{ OnMoveTrack(TrackUtilities::OnMoveBottomID); },
+         canMove(false) );
    EndSection();
 END_POPUP_MENU()
 
@@ -218,7 +206,7 @@ void SetTrackNameCommand::PopulateOrExchange(ShuttleGui & S)
    S.EndMultiColumn();
 }
 
-void TrackMenuTable::OnSetName(wxCommandEvent &)
+void TrackMenuTable::OnSetName()
 {
    Track *const pTrack = mpData->pTrack;
    if (pTrack)
@@ -246,22 +234,9 @@ void TrackMenuTable::OnSetName(wxCommandEvent &)
    }
 }
 
-void TrackMenuTable::OnMoveTrack(wxCommandEvent &event)
+void TrackMenuTable::OnMoveTrack(TrackUtilities::MoveChoice choice)
 {
    AudacityProject *const project = &mpData->project;
-   TrackUtilities::MoveChoice choice;
-   switch (event.GetId()) {
-   default:
-      wxASSERT(false);
-   case OnMoveUpID:
-      choice = TrackUtilities::OnMoveUpID; break;
-   case OnMoveDownID:
-      choice = TrackUtilities::OnMoveDownID; break;
-   case OnMoveTopID:
-      choice = TrackUtilities::OnMoveTopID; break;
-   case OnMoveBottomID:
-      choice = TrackUtilities::OnMoveBottomID; break;
-   }
 
    TrackUtilities::DoMoveTrack(*project, mpData->pTrack, choice);
 

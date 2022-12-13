@@ -10,8 +10,8 @@ Paul Licameli split from TrackPanel.cpp
 
 
 #include "PopupMenuTable.h"
-#include "widgets/BasicMenu.h"
-#include "widgets/wxWidgetsWindowPlacement.h"
+#include "BasicMenu.h"
+#include "wxWidgetsWindowPlacement.h"
 
 PopupMenuTableEntry::~PopupMenuTableEntry()
 {}
@@ -31,7 +31,7 @@ PopupSubMenu::PopupSubMenu( const Identifier &stringId,
 PopupMenu::~PopupMenu() = default;
 
 namespace {
-struct PopupMenuImpl : PopupMenu, wxMenu
+struct PopupMenuImpl : PopupMenu
 {
    PopupMenuImpl(void *pUserData_)
       : pUserData{ pUserData_ } {}
@@ -43,6 +43,7 @@ struct PopupMenuImpl : PopupMenu, wxMenu
    void Extend(PopupMenuTable *pTable);
 
    void *pUserData;
+   BasicMenu::Handle mHandle{ BasicMenu::FreshMenu };
 };
 
 class PopupMenuBuilder : public PopupMenuVisitor {
@@ -84,7 +85,8 @@ void PopupMenuBuilder::DoEndGroup( Registry::GroupItem &item, const Path &path )
          auto subMenu = std::move( mMenus.back() );
          mMenus.pop_back();
          mMenu = mMenus.empty() ? mRoot : mMenus.back().get();
-         mMenu->AppendSubMenu( subMenu.release(), pItem->caption.Translation());
+         mMenu->mHandle.AppendSubMenu(
+            std::move(subMenu->mHandle), { pItem->caption } );
       }
    }
 }
@@ -92,20 +94,24 @@ void PopupMenuBuilder::DoEndGroup( Registry::GroupItem &item, const Path &path )
 void PopupMenuBuilder::DoVisit( Registry::SingleItem &item, const Path &path )
 {
    auto pEntry = static_cast<PopupMenuTableEntry*>( &item );
+   const auto &caption = pEntry->caption;
    switch (pEntry->type) {
       case PopupMenuTable::Entry::Item:
       {
-         mMenu->Append(pEntry->id, pEntry->caption.Translation());
+         mMenu->mHandle.Append(
+            caption, pEntry->callback, {}, pEntry->id );
          break;
       }
       case PopupMenuTable::Entry::RadioItem:
       {
-         mMenu->AppendRadioItem(pEntry->id, pEntry->caption.Translation());
+         mMenu->mHandle.AppendRadioItem(
+            caption, pEntry->callback, {}, pEntry->id );
          break;
       }
       case PopupMenuTable::Entry::CheckItem:
       {
-         mMenu->AppendCheckItem(pEntry->id, pEntry->caption.Translation());
+         mMenu->mHandle.AppendCheckItem(
+            caption, pEntry->callback, {}, pEntry->id );
          break;
       }
       default:
@@ -117,28 +123,23 @@ void PopupMenuBuilder::DoVisit( Registry::SingleItem &item, const Path &path )
    // redundant
    pEntry->handler.InitUserData( mpUserData );
 
-   if ( pEntry->init )
-      pEntry->init( pEntry->handler, *mMenu, pEntry->id );
-
-   mMenu->Bind(
-      wxEVT_COMMAND_MENU_SELECTED, pEntry->func, &pEntry->handler, pEntry->id);
+   if ( pEntry->stateFn )
+      mMenu->mHandle.SetState( pEntry->id, pEntry->stateFn() );
 }
 
 void PopupMenuBuilder::DoSeparator()
 {
-   mMenu->AppendSeparator();
+   mMenu->mHandle.AppendSeparator();
 }
 
 PopupMenuImpl::~PopupMenuImpl()
 {
-   // Event connections between the parent window and the singleton table
-   // object must be broken when this menu is destroyed.
-   Disconnect();
 }
+
 
 void PopupMenuImpl::Popup( wxWindow &window, const wxPoint &pos )
 {
-   BasicMenu::Handle{ this }.Popup(
+   mHandle.Popup(
       wxWidgetsWindowPlacement{ &window }, { pos.x, pos.y }
    );
 }
@@ -166,11 +167,11 @@ void PopupMenuTable::Append( Registry::BaseItemPtr pItem )
 
 void PopupMenuTable::Append(
    const Identifier &stringId, PopupMenuTableEntry::Type type, int id,
-   const TranslatableString &string, wxCommandEventFunction memFn,
-   const PopupMenuTableEntry::InitFunction &init )
+   const BasicMenu::Item::Label &string, Callback callback,
+   const PopupMenuTableEntry::StateFunction &stateFn )
 {
    Append( std::make_unique<Entry>(
-      stringId, type, id, string, memFn, *this, init ) );
+      stringId, type, id, string, move(callback), *this, stateFn ) );
 }
 
 void PopupMenuTable::BeginSection( const Identifier &name )
@@ -193,6 +194,6 @@ std::unique_ptr< PopupMenu > PopupMenuTable::BuildMenu(
    // Rebuild as needed each time.  That makes it safe in case of language change.
    auto theMenu = std::make_unique<PopupMenuImpl>( pUserData );
    ExtendMenu( *theMenu, *pTable );
-   return theMenu;
+   return theMenu;	
 }
 

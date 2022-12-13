@@ -276,15 +276,13 @@ BeginSection( "Scales" );
       for (int ii = 0, nn = names.size(); ii < nn; ++ii) {
          AppendRadioItem( names[ii].Internal(),
             OnFirstSpectrumScaleID + ii, names[ii].Msgid(),
-            POPUP_MENU_FN( OnSpectrumScaleType ),
-            []( PopupMenuHandler &handler, wxMenu &menu, int id ){
-               WaveTrack *const wt =
-                  static_cast<SpectrumVRulerMenuTable&>( handler )
-                     .mpData->pTrack;
-               if ( id ==
-                  OnFirstSpectrumScaleID +
-                      (int)(wt->GetSpectrogramSettings().scaleType ) )
-                  menu.Check(id, true);
+            [this, ii]{ OnSpectrumScaleType(ii); },
+            [this, ii]() -> BasicMenu::Item::State {
+               WaveTrack *const wt = mpData->pTrack;
+               return { true, // Always enabled, not always checked
+                  ii == static_cast<int>(
+                     wt->GetSpectrogramSettings().scaleType )
+               };
             }
          );
       }
@@ -312,7 +310,7 @@ EndSection();
 
 END_POPUP_MENU()
 
-void SpectrumVRulerMenuTable::OnSpectrumScaleType(wxCommandEvent &evt)
+void SpectrumVRulerMenuTable::OnSpectrumScaleType(int type)
 {
    WaveTrack *const wt = mpData->pTrack;
 
@@ -320,7 +318,7 @@ void SpectrumVRulerMenuTable::OnSpectrumScaleType(wxCommandEvent &evt)
       SpectrogramSettings::ScaleType(
          std::max(0,
             std::min((int)(SpectrogramSettings::stNumScaleTypes) - 1,
-               evt.GetId() - OnFirstSpectrumScaleID
+               type
       )));
    if (wt->GetSpectrogramSettings().scaleType != newScaleType) {
       for (auto channel : TrackList::Channels(wt))

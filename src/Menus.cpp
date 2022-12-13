@@ -41,10 +41,10 @@
 #include "toolbars/ToolManager.h"
 #include "widgets/AudacityMessageBox.h"
 #include "BasicUI.h"
+#include "widgets/BasicMenu.h"
 
 #include <unordered_set>
 
-#include <wx/menu.h>
 #include <wx/windowptr.h>
 #include <wx/log.h>
 
@@ -185,11 +185,11 @@ void MenuVisitor::DoSeparator()
 namespace MenuTable {
 
 MenuItem::MenuItem( const Identifier &internalName,
-   const TranslatableString &title_, BaseItemPtrs &&items_ )
+   const BasicMenu::Item::Text &text, BaseItemPtrs &&items_ )
 : ConcreteGroupItem< false, ToolbarMenuVisitor >{
-   internalName, std::move( items_ ) }, title{ title_ }
+   internalName, std::move( items_ ) }, text{ text }
 {
-   wxASSERT( !title.empty() );
+   wxASSERT( !text.label.main.empty() );
 }
 MenuItem::~MenuItem() {}
 
@@ -202,12 +202,12 @@ ConditionalGroupItem::ConditionalGroupItem(
 ConditionalGroupItem::~ConditionalGroupItem() {}
 
 CommandItem::CommandItem(const CommandID &name_,
-         const TranslatableString &label_in_,
+         const BasicMenu::Item::Text &text,
          CommandFunctorPointer callback_,
          CommandFlag flags_,
          const CommandManager::Options &options_,
          CommandHandlerFinder finder_)
-: SingleItem{ name_ }, label_in{ label_in_ }
+: SingleItem{ name_ }, text{ text }
 , finder{ finder_ }, callback{ callback_ }
 , flags{ flags_ }, options{ options_ }
 {}
@@ -283,7 +283,7 @@ struct MenuItemVisitor : ToolbarMenuVisitor
       auto pItem = &item;
       if (const auto pMenu =
           dynamic_cast<MenuItem*>( pItem )) {
-         manager.BeginMenu( pMenu->title );
+         manager.BeginMenu( pMenu->text );
       }
       else
       if (const auto pConditionalGroup =
@@ -342,7 +342,7 @@ struct MenuItemVisitor : ToolbarMenuVisitor
       if (const auto pCommand =
           dynamic_cast<CommandItem*>( pItem )) {
          manager.AddItem( project,
-            pCommand->name, pCommand->label_in,
+            pCommand->name, pCommand->text,
             pCommand->finder, pCommand->callback,
             pCommand->flags, pCommand->options
          );
@@ -350,7 +350,7 @@ struct MenuItemVisitor : ToolbarMenuVisitor
       else
       if (const auto pCommandList =
          dynamic_cast<CommandGroupItem*>( pItem ) ) {
-         manager.AddItemList(pCommandList->name,
+         manager.AddItemList(project, pCommandList->name,
             pCommandList->items.data(), pCommandList->items.size(),
             pCommandList->finder, pCommandList->callback,
             pCommandList->flags, pCommandList->isEffect);
@@ -359,7 +359,7 @@ struct MenuItemVisitor : ToolbarMenuVisitor
       if (const auto pSpecial =
           dynamic_cast<SpecialItem*>( pItem )) {
          wxASSERT( pCurrentMenu );
-         pSpecial->fn( project, *pCurrentMenu );
+         pSpecial->fn( project, pCurrentMenu );
       }
       else
          wxASSERT( false );
@@ -423,7 +423,7 @@ void MenuCreator::CreateMenusAndCommands(AudacityProject &project)
    MenuItemVisitor visitor{ project, commandManager };
    MenuManager::Visit( visitor );
 
-   GetProjectFrame( project ).SetMenuBar(menubar.release());
+   std::move( menubar ).AttachTo( *ProjectFramePlacement( &project ) );
 
    mLastFlags = AlwaysEnabledFlag;
 
@@ -476,13 +476,6 @@ void MenuManager::ModifyUndoMenuItems(AudacityProject &project)
    }
 }
 
-// Get hackcess to a protected method
-class wxFrameEx : public wxFrame
-{
-public:
-   using wxFrame::DetachMenuBar;
-};
-
 void MenuCreator::RebuildMenuBar(AudacityProject &project)
 {
    // On OSX, we can't rebuild the menus while a modal dialog is being shown
@@ -495,15 +488,6 @@ void MenuCreator::RebuildMenuBar(AudacityProject &project)
       wxASSERT((!dlg || !dlg->IsModal()));
    }
 #endif
-
-   // Delete the menus, since we will soon recreate them.
-   // Rather oddly, the menus don't vanish as a result of doing this.
-   {
-      auto &window = static_cast<wxFrameEx&>( GetProjectFrame( project ) );
-      wxWindowPtr<wxMenuBar> menuBar{ window.GetMenuBar() };
-      window.DetachMenuBar();
-      // menuBar gets deleted here
-   }
 
    CommandManager::Get( project ).PurgeData();
 
