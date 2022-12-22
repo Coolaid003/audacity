@@ -148,8 +148,64 @@ typedef struct {
    one_pole_t one_pole[2];
 } filter_array_t;
 
+static void set_eq(filter_array_t* p, double rate,
+    double fc_highpass, double fc_lowpass)
+{
+   { /* EQ: highpass */
+      one_pole_t* q = &p->one_pole[0];
+      q->a1 = -exp(-2 * M_PI * fc_highpass / rate);
+      q->b0 = (1 - q->a1) / 2, q->b1 = -q->b0;
+   }
+   { /* EQ: lowpass */
+      one_pole_t* q = &p->one_pole[1];
+      q->a1 = -exp(-2 * M_PI * fc_lowpass / rate);
+      q->b0 = 1 + q->a1, q->b1 = 0;
+   }
+}
+
+
+static void filter_array_allocate(filter_array_t* p, double rate,
+   double scale, double offset)
+{
+   size_t i;
+   double r = rate * (1 / 44100.); /* Compensate for actual sample-rate */
+
+   for (i = 0; i < array_length(comb_lengths); ++i, offset = -offset)
+   {
+      filter_t* pcomb = &p->comb[i];
+      pcomb->size = (size_t)(scale * r * (comb_lengths[i] + stereo_adjust * offset) + .5);
+      pcomb->ptr = lsx_zalloc(pcomb->buffer, pcomb->size);
+   }
+   for (i = 0; i < array_length(allpass_lengths); ++i, offset = -offset)
+   {
+      filter_t* pallpass = &p->allpass[i];
+      pallpass->size = (size_t)(r * (allpass_lengths[i] + stereo_adjust * offset) + .5);
+      pallpass->ptr = lsx_zalloc(pallpass->buffer, pallpass->size);
+   }
+}
+
+static void filter_array_init(filter_array_t* p, double rate,
+   double scale, double offset)
+{
+   size_t i;
+   double r = rate * (1 / 44100.); /* Compensate for actual sample-rate */
+
+   for (i = 0; i < array_length(comb_lengths); ++i, offset = -offset)
+   {
+      filter_t* pcomb = &p->comb[i];
+      pcomb->size = (size_t)(scale * r * (comb_lengths[i] + stereo_adjust * offset) + .5);
+   }
+   for (i = 0; i < array_length(allpass_lengths); ++i, offset = -offset)
+   {
+      filter_t* pallpass = &p->allpass[i];
+      pallpass->size = (size_t)(r * (allpass_lengths[i] + stereo_adjust * offset) + .5);
+   }
+}
+
+
+
 static void filter_array_create(filter_array_t * p, double rate,
-      double scale, double offset, double fc_highpass, double fc_lowpass)
+      double scale, double offset)
 {
    size_t i;
    double r = rate * (1 / 44100.); /* Compensate for actual sample-rate */
@@ -165,16 +221,6 @@ static void filter_array_create(filter_array_t * p, double rate,
       filter_t * pallpass = &p->allpass[i];
       pallpass->size = (size_t)(r * (allpass_lengths[i] + stereo_adjust * offset) + .5);
       pallpass->ptr = lsx_zalloc(pallpass->buffer, pallpass->size);
-   }
-   { /* EQ: highpass */
-      one_pole_t * q = &p->one_pole[0];
-      q->a1 = -exp(-2 * M_PI * fc_highpass / rate);
-      q->b0 = (1 - q->a1)/2, q->b1 = -q->b0;
-   }
-   { /* EQ: lowpass */
-      one_pole_t * q = &p->one_pole[1];
-      q->a1 = -exp(-2 * M_PI * fc_lowpass / rate);
-      q->b0 = 1 + q->a1, q->b1 = 0;
    }
 }
 
@@ -218,6 +264,63 @@ typedef struct {
    float * out[2];
 } reverb_t;
 
+
+static void reverb_allocate(reverb_t* p, double sample_rate_Hz, size_t buffer_size, float** out)
+{
+   memset(p, 0, sizeof(*p));
+
+   // Input queue
+   fifo_create(&p->input_fifo, sizeof(float));
+
+   // Outputs
+   out[0] = lsx_zalloc(p->out[0], buffer_size);
+   out[1] = lsx_zalloc(p->out[1], buffer_size);
+
+   // Allpass & Comb filters
+   filter_array_allocate(p->chan + 0, sample_rate_Hz, 1.0, 0.0);
+   filter_array_allocate(p->chan + 1, sample_rate_Hz, 1.0, 1.0);
+}
+
+static void reverb_init
+(
+   reverb_t* p,
+   double sample_rate_Hz,
+   double wet_gain_dB,
+   double room_scale,     /* % */
+   double reverberance,
+   double hf_damping,
+   double pre_delay_ms,
+   double stereo_depth,
+   double tone_low,       /* % */
+   double tone_high       /* % */
+)
+{
+   // Input queue 
+   size_t delay = pre_delay_ms / 1000 * sample_rate_Hz + .5;
+   memset(fifo_write(&p->input_fifo, delay, 0), 0, delay * sizeof(float));
+
+   // Feedback, Damping, Gain
+   double a = -1 / log(1 - /**/.3 /**/);           /* Set minimum feedback */
+   double b = 100 / (log(1 - /**/.98/**/) * a + 1);  /* Set maximum feedback */
+   p->feedback = 1 - exp((reverberance - b) / (a * b));
+   p->hf_damping = hf_damping / 100 * .3 + .2;
+   p->gain = dB_to_linear(wet_gain_dB) * .015;
+
+   // LP-HP Filters
+   double fc_highpass = midi_to_freq(72 - tone_low / 100 * 48);
+   double fc_lowpass = midi_to_freq(72 + tone_high / 100 * 48);
+   set_eq(&p->chan[0], sample_rate_Hz, fc_highpass, fc_lowpass);
+   set_eq(&p->chan[1], sample_rate_Hz, fc_highpass, fc_lowpass);
+
+   // Allpass & Comb filters
+   double scale = room_scale / 100 * .9 + .1;
+   double depth = stereo_depth / 100;
+   for (size_t i = 0; i <= ceil(depth); ++i)
+   {
+      filter_array_init(p->chan + i, sample_rate_Hz, scale, i * depth);
+   }
+}
+
 static void reverb_create(reverb_t * p, double sample_rate_Hz,
       double wet_gain_dB,
       double room_scale,     /* % */
@@ -230,24 +333,9 @@ static void reverb_create(reverb_t * p, double sample_rate_Hz,
       size_t buffer_size,
       float * * out)
 {
-   size_t i, delay = pre_delay_ms / 1000 * sample_rate_Hz + .5;
-   double scale = room_scale / 100 * .9 + .1;
-   double depth = stereo_depth / 100;
-   double a =  -1 /  log(1 - /**/.3 /**/);           /* Set minimum feedback */
-   double b = 100 / (log(1 - /**/.98/**/) * a + 1);  /* Set maximum feedback */
-   double fc_highpass = midi_to_freq(72 - tone_low / 100 * 48);
-   double fc_lowpass  = midi_to_freq(72 + tone_high/ 100 * 48);
+   reverb_allocate(p, sample_rate_Hz, buffer_size, out);
 
-   memset(p, 0, sizeof(*p));
-   p->feedback = 1 - exp((reverberance - b) / (a * b));
-   p->hf_damping = hf_damping / 100 * .3 + .2;
-   p->gain = dB_to_linear(wet_gain_dB) * .015;
-   fifo_create(&p->input_fifo, sizeof(float));
-   memset(fifo_write(&p->input_fifo, delay, 0), 0, delay * sizeof(float));
-   for (i = 0; i <= ceil(depth); ++i) {
-      filter_array_create(p->chan + i, sample_rate_Hz, scale, i * depth, fc_highpass, fc_lowpass);
-      out[i] = lsx_zalloc(p->out[i], buffer_size);
-   }
+   reverb_init(p, sample_rate_Hz, wet_gain_dB, room_scale, reverberance, hf_damping, pre_delay_ms, stereo_depth, tone_low, tone_high);
 }
 
 static void reverb_process(reverb_t * p, size_t length)
