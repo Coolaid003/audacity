@@ -119,6 +119,3 @@ void AudacityProject::SetInitialImportPath(const FilePath &path)
       mInitialImportPath = path;
    }
 }
-
-// Generate the needed, linkable registry functions
-DEFINE_XML_METHOD_REGISTRY( ProjectFileIORegistry );
