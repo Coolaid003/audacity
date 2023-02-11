@@ -74,6 +74,19 @@ public:
 
    using Regions = std::vector < Region >;
 
+   /// \brief Structure to hold region of a wavetrack along with the
+   /// clip in it. Uses the sequence within the clip for start and end
+   struct ClipRegion
+   {
+      ClipRegion() : start(0), end(0), clip(NULL) {}
+      ClipRegion(sampleCount start_, sampleCount end_, WaveClipHolder clip_) : start(start_), end(end_), clip(clip_) {}
+
+      sampleCount start, end;
+      WaveClipHolder clip;
+   };
+
+   using ClipRegions = std::vector < ClipRegion >;
+
    static wxString GetDefaultAudioTrackNamePreference();
 
    //
@@ -220,6 +233,13 @@ private:
    void Join(double t0, double t1) /* not override */;
    // May assume precondition: t0 <= t1
    void Disjoin(double t0, double t1) /* not override */;
+
+   
+   // May assume precondition: t0 <= t1
+   /*  Internal function to create a copy of the part of an existing clip
+   *   Will cause clip overlap, that needs to be taken care of by the caller!
+   */
+   WaveClip* CopyToNewClip(WaveClipHolder clip, sampleCount start, sampleCount end);
 
    // May assume precondition: t0 <= t1
    void Trim(double t0, double t1) /* not override */;

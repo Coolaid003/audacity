@@ -1624,17 +1624,17 @@ void WaveTrack::InsertSilence(double t, double len)
 /*! @excsafety{Weak} */
 void WaveTrack::Disjoin(double t0, double t1)
 {
-   auto minSamples = TimeToLongSamples( WAVETRACK_MERGE_POINT_TOLERANCE );
+   auto minSamples = TimeToLongSamples(WAVETRACK_MERGE_POINT_TOLERANCE);
    const size_t maxAtOnce = 1048576;
    Floats buffer{ maxAtOnce };
-   Regions regions;
+   ClipRegions clipRegions;
 
-   for (const auto &clip : mClips)
+   for (const auto& clip : mClips)
    {
       double startTime = clip->GetPlayStartTime();
       double endTime = clip->GetPlayEndTime();
 
-      if( endTime < t0 || startTime > t1 )
+      if (endTime < t0 || startTime > t1)
          continue;
 
       //simply look for a sequence of zeroes and if the sequence
@@ -1644,37 +1644,38 @@ void WaveTrack::Disjoin(double t0, double t1)
       auto start = clip->TimeToSamples(std::max(.0, t0 - startTime));
       auto end = clip->TimeToSamples(std::min(endTime, t1) - startTime);
 
-      auto len = ( end - start );
-      for( decltype(len) done = 0; done < len; done += maxAtOnce )
+      auto len = (end - start);
+      for (decltype(len) done = 0; done < len; done += maxAtOnce)
       {
-         auto numSamples = limitSampleBufferSize( maxAtOnce, len - done );
+         auto numSamples = limitSampleBufferSize(maxAtOnce, len - done);
 
-         clip->GetSamples( ( samplePtr )buffer.get(), floatSample, start + done,
-               numSamples );
-         for( decltype(numSamples) i = 0; i < numSamples; i++ )
+         clip->GetSamples((samplePtr)buffer.get(), floatSample, start + done,
+            numSamples);
+         for (decltype(numSamples) i = 0; i < numSamples; i++)
          {
             auto curSamplePos = start + done + i;
 
             //start a NEW sequence
-            if( buffer[ i ] == 0.0 && seqStart == -1 )
+            if (buffer[i] == 0.0 && seqStart == -1)
                seqStart = curSamplePos;
-            else if( buffer[ i ] != 0.0 || curSamplePos == end - 1 )
+            else if (buffer[i] != 0.0 || curSamplePos == end - 1)
             {
-               if( seqStart != -1 )
+               if (seqStart != -1)
                {
                   decltype(end) seqEnd;
 
                   //consider the end case, where selection ends in zeroes
-                  if( curSamplePos == end - 1 && buffer[ i ] == 0.0 )
+                  if (curSamplePos == end - 1 && buffer[i] == 0.0)
                      seqEnd = end;
                   else
                      seqEnd = curSamplePos;
-                  if( seqEnd - seqStart + 1 > minSamples )
+                  if (seqEnd - seqStart + 1 > minSamples)
                   {
-                     regions.push_back(
-                        Region(
-                           startTime + clip->SamplesToTime(seqStart),
-                           startTime + clip->SamplesToTime(seqEnd)
+                     clipRegions.push_back(
+                        ClipRegion(
+                           seqStart,
+                           seqEnd,
+                           clip
                         )
                      );
                   }
@@ -1684,12 +1685,57 @@ void WaveTrack::Disjoin(double t0, double t1)
          }
       }
    }
-
-   for( unsigned int i = 0; i < regions.size(); i++ )
+   /* This should use proper trim instead of soft SplitDelete
+    * Creates new clips from the segments copying from the original clip,
+    * than remove the original clip when it is no longer has impacted regions
+    */
+   
+   sampleCount lastEndPos = -1;
+   WaveClip *newClip;
+   for (unsigned int i = 0; i < clipRegions.size(); i++)
    {
-      const Region &region = regions.at(i);
-      SplitDelete(region.start, region.end );
+      const ClipRegion& region = clipRegions.at(i);
+      // There is no segment to be kept on the left
+      if (region.clip->GetPlayStartSample() == region.start)
+      {
+         // the region spans to the end of the clip, so we can just delete it
+         if (region.clip->GetPlayEndSample() == region.end) {
+            WaveClipHolder toRemove = RemoveAndReturnClip(region.clip.get());
+            continue;
+         }
+      }
+      // create the left clip
+      newClip = CopyToNewClip(region.clip, std::max(region.clip->GetPlayStartSample(),lastEndPos),region.start);
+
+      // lookahead to see if we are done with this clip
+      if ((i == clipRegions.size() - 1) || (region.clip!=clipRegions.at(i+1).clip)) {
+         // the region spans to the end of the clip, so we can just delete it
+         if (region.clip->GetPlayEndSample() != region.end) {
+            newClip = CopyToNewClip(region.clip, region.end, region.clip->GetPlayEndSample());
+         }
+         //remove the remainder of the clip
+         WaveClipHolder toRemove = RemoveAndReturnClip(region.clip.get());        
+      }
+      lastEndPos=region.end;
    }
+}
+
+WaveClip* WaveTrack::CopyToNewClip(WaveClipHolder clip, sampleCount start, sampleCount end) {
+   WaveClip* newClip = CreateClip(clip->GetPlayStartTime()+clip->SamplesToTime(start));
+   const size_t maxAtOnce = 1048576;
+   Floats buffer{ maxAtOnce };
+
+   auto len = (end - start);
+   for (decltype(len) done = 0; done < len; done += maxAtOnce)
+   {
+      auto numSamples = limitSampleBufferSize(maxAtOnce, len - done);
+
+      clip->GetSamples((samplePtr)buffer.get(), floatSample, start + done,
+         numSamples);
+      newClip->Append((samplePtr)buffer.get(), floatSample, numSamples, 1);
+   }
+   Flush();
+   return newClip;
 }
 
 /*! @excsafety{Weak} */
