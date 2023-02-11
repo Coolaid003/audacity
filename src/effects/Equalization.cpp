@@ -32,9 +32,9 @@
    Clone of the FFT Filter effect, no longer part of Audacity.
 
 *//*******************************************************************/
-
 #include "Equalization.h"
 #include "EqualizationUI.h"
+#include "EffectEditor.h"
 #include "LoadEffects.h"
 #include "PasteOverPreservingClips.h"
 #include "ShuttleGui.h"
@@ -300,13 +300,11 @@ EffectEqualization::LoadFactoryPreset(int id, EffectSettings &settings) const
    return { nullptr };
 }
 
-
-
-// EffectUIClientInterface implementation
-
-bool EffectEqualization::ValidateUI(EffectSettings &settings)
+bool EffectEqualization::ValidateUI(
+   const EffectPlugin &, EffectSettings &settings) const
 {
-   return mUI.ValidateUI(settings);
+   // Stateful effect still cheats const_cast!
+   return const_cast<EffectEqualization&>(*this).mUI.ValidateUI(settings);
 }
 
 // Effect implementation
@@ -364,7 +362,8 @@ bool EffectEqualization::Init()
    return(true);
 }
 
-bool EffectEqualization::Process(EffectInstance &, EffectSettings &)
+bool EffectEqualization::Process(EffectContext &context,
+   EffectInstance &, EffectSettings &)
 {
    this->CopyInputTracks(); // Set up mOutputTracks.
    mParameters.CalcFilter();
@@ -382,7 +381,7 @@ bool EffectEqualization::Process(EffectInstance &, EffectSettings &)
          auto end = track->TimeToLongSamples(t1);
          auto len = end - start;
 
-         if (!ProcessOne(count, track, start, len))
+         if (!ProcessOne(context, count, track, start, len))
          {
             bGoodResult = false;
             break;
@@ -396,12 +395,7 @@ bool EffectEqualization::Process(EffectInstance &, EffectSettings &)
    return bGoodResult;
 }
 
-bool EffectEqualization::CloseUI()
-{
-   return Effect::CloseUI();
-}
-
-std::unique_ptr<EffectUIValidator> EffectEqualization::PopulateOrExchange(
+std::unique_ptr<EffectEditor> EffectEqualization::PopulateOrExchange(
    ShuttleGui & S, EffectInstance &instance, EffectSettingsAccess &access,
    const EffectOutputs *pOutputs)
 {
@@ -456,8 +450,8 @@ struct EqualizationTask {
 
 // EffectEqualization implementation
 
-bool EffectEqualization::ProcessOne(int count, WaveTrack * t,
-                                    sampleCount start, sampleCount len)
+bool EffectEqualization::ProcessOne(EffectContext &context, int count,
+   WaveTrack * t, sampleCount start, sampleCount len)
 {
    constexpr auto windowSize = EqualizationFilter::windowSize;
 
@@ -482,7 +476,7 @@ bool EffectEqualization::ProcessOne(int count, WaveTrack * t,
    auto &output = task.output;
    t->ConvertToSampleFormat( floatSample );
 
-   TrackProgress(count, 0.);
+   context.TrackProgress(count, 0.);
    bool bLoopSuccess = true;
    size_t wcopy = 0;
 
@@ -515,8 +509,8 @@ bool EffectEqualization::ProcessOne(int count, WaveTrack * t,
       len -= block;
       s += block;
 
-      if (TrackProgress(count, ( s - start ).as_double() /
-                        originalLen.as_double()))
+      if (context.TrackProgress(count,
+         ( s - start ).as_double() / originalLen.as_double()))
       {
          bLoopSuccess = false;
          break;

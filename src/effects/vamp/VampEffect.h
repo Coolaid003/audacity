@@ -17,7 +17,7 @@
 
 #include <vamp-hostsdk/PluginLoader.h>
 
-#include "../Effect.h"
+#include "../StatefulEffect.h"
 #include "MemoryX.h"
 
 class wxStaticText;
@@ -68,8 +68,9 @@ public:
    // Effect implementation
 
    bool Init() override;
-   bool Process(EffectInstance &instance, EffectSettings &settings) override;
-   std::unique_ptr<EffectUIValidator> PopulateOrExchange(
+   bool Process(EffectContext &context,
+      EffectInstance &instance, EffectSettings &settings) override;
+   std::unique_ptr<EffectEditor> PopulateOrExchange(
       ShuttleGui & S, EffectInstance &instance,
       EffectSettingsAccess &access, const EffectOutputs *pOutputs) override;
    bool TransferDataToWindow(const EffectSettings &settings) override;

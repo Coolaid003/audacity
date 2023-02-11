@@ -13,9 +13,8 @@
 \brief An Extreme Time Stretch and Time Smear effect
 
 *//*******************************************************************/
-
-
 #include "Paulstretch.h"
+#include "EffectEditor.h"
 #include "LoadEffects.h"
 
 #include <algorithm>
@@ -28,7 +27,6 @@
 #include "FFT.h"
 #include "../widgets/valnum.h"
 #include "../widgets/AudacityMessageBox.h"
-#include "Prefs.h"
 
 #include "../WaveTrack.h"
 
@@ -129,7 +127,7 @@ EffectType EffectPaulstretch::GetType() const
 
 // Effect implementation
 
-double EffectPaulstretch::CalcPreviewInputLength(
+double EffectPaulstretch::CalcPreviewInputLength(const EffectContext &,
    const EffectSettings &, double previewLength) const
 {
    // FIXME: Preview is currently at the project rate, but should really be
@@ -142,8 +140,8 @@ double EffectPaulstretch::CalcPreviewInputLength(
    return minLength;
 }
 
-
-bool EffectPaulstretch::Process(EffectInstance &, EffectSettings &)
+bool EffectPaulstretch::Process(EffectContext &context,
+   EffectInstance &, EffectSettings &)
 {
    CopyInputTracks();
    m_t1=mT1;
@@ -155,7 +153,7 @@ bool EffectPaulstretch::Process(EffectInstance &, EffectSettings &)
       double t1 = mT1 > trackEnd? trackEnd: mT1;
 
       if (t1 > t0) {
-         if (!ProcessOne(track, t0,t1,count))
+         if (!ProcessOne(context, track, t0,t1,count))
             return false;
       }
 
@@ -169,7 +167,7 @@ bool EffectPaulstretch::Process(EffectInstance &, EffectSettings &)
 }
 
 
-std::unique_ptr<EffectUIValidator> EffectPaulstretch::PopulateOrExchange(
+std::unique_ptr<EffectEditor> EffectPaulstretch::PopulateOrExchange(
    ShuttleGui & S, EffectInstance &, EffectSettingsAccess &,
    const EffectOutputs *)
 {
@@ -218,7 +216,7 @@ bool EffectPaulstretch::TransferDataFromWindow(EffectSettings &)
 
 void EffectPaulstretch::OnText(wxCommandEvent & WXUNUSED(evt))
 {
-   EffectUIValidator::EnableApply(
+   EffectEditor::EnableApply(
       mUIParent, mUIParent->TransferDataFromWindow());
 }
 
@@ -240,7 +238,8 @@ size_t EffectPaulstretch::GetBufferSize(double rate) const
    return std::max<size_t>(stmp, 128);
 }
 
-bool EffectPaulstretch::ProcessOne(WaveTrack *track,double t0,double t1,int count)
+bool EffectPaulstretch::ProcessOne(EffectContext &context,
+   WaveTrack *track, double t0, double t1, int count)
 {
    const auto badAllocMessage =
       XO("Requested value exceeds memory capacity.");
@@ -270,9 +269,8 @@ bool EffectPaulstretch::ProcessOne(WaveTrack *track,double t0,double t1,int coun
       maxTimeRes = pow(2.0, floor(maxTimeRes) + 0.5);
       maxTimeRes = maxTimeRes / track->GetRate();
 
-      if (this->IsPreviewing()) {
-         double defaultPreviewLen;
-         gPrefs->Read(wxT("/AudioIO/EffectsPreviewLen"), &defaultPreviewLen, 6.0);
+      if (context.isPreviewing) {
+         auto defaultPreviewLen = EffectPreviewLength.Read();
 
          if ((minDuration / mProjectRate) < defaultPreviewLen) {
             ::Effect::MessageBox(
@@ -371,7 +369,7 @@ bool EffectPaulstretch::ProcessOne(WaveTrack *track,double t0,double t1,int coun
             outputTrack->Append((samplePtr)stretch.out_buf.get(), floatSample, stretch.out_bufsize);
 
             nget = stretch.get_nsamples();
-            if (TrackProgress(count,
+            if (context.TrackProgress(count,
                s.as_double() / len.as_double()
             )) {
                cancelled = true;

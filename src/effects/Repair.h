@@ -11,7 +11,7 @@
 #ifndef __AUDACITY_EFFECT_REPAIR__
 #define __AUDACITY_EFFECT_REPAIR__
 
-#include "Effect.h"
+#include "StatefulEffect.h"
 
 class WaveTrack;
 
@@ -35,18 +35,18 @@ public:
 
    // Effect implementation
 
-   bool Process(EffectInstance &instance, EffectSettings &settings) override;
+   bool Process(EffectContext &context,
+      EffectInstance &instance, EffectSettings &settings) override;
 
    bool NeedsDither() const override;
 
 private:
    // EffectRepair implementation
 
-   bool ProcessOne(int count, WaveTrack * track,
-                   sampleCount start,
-                   size_t len,
-                   size_t repairStart, // offset relative to start
-                   size_t repairLen);
+   bool ProcessOne(EffectContext &context, int count, WaveTrack * track,
+      sampleCount start, size_t len,
+      size_t repairStart, // offset relative to start
+      size_t repairLen);
 };
 
 #endif // __AUDACITY_EFFECT_REPAIT__

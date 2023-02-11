@@ -14,11 +14,9 @@
   slowing down tempo without changing pitch.
 
 *//*******************************************************************/
-
-
-
 #if USE_SOUNDTOUCH
 #include "ChangeTempo.h"
+#include "EffectEditor.h"
 
 #if USE_SBSMS
 #include <wx/valgen.h>
@@ -139,7 +137,7 @@ bool EffectChangeTempo::SupportsAutomation() const
 
 // Effect implementation
 
-double EffectChangeTempo::CalcPreviewInputLength(
+double EffectChangeTempo::CalcPreviewInputLength(const EffectContext &,
    const EffectSettings &, double previewLength) const
 {
    return previewLength * (100.0 + m_PercentChange) / 100.0;
@@ -160,7 +158,8 @@ bool EffectChangeTempo::Init()
    return true;
 }
 
-bool EffectChangeTempo::Process(EffectInstance &, EffectSettings &settings)
+bool EffectChangeTempo::Process(EffectContext &context,
+   EffectInstance &, EffectSettings &settings)
 {
    bool success = false;
 
@@ -172,7 +171,7 @@ bool EffectChangeTempo::Process(EffectInstance &, EffectSettings &settings)
       proxy.mProxyEffectName = XO("High Quality Tempo Change");
       proxy.setParameters(tempoRatio, 1.0);
       //! Already processing; don't make a dialog
-      success = Delegate(proxy, settings);
+      success = Delegate(context, proxy, settings);
    }
    else
 #endif
@@ -184,7 +183,8 @@ bool EffectChangeTempo::Process(EffectInstance &, EffectSettings &settings)
       double mT1Dashed = mT0 + (mT1 - mT0)/(m_PercentChange/100.0 + 1.0);
       RegionTimeWarper warper{ mT0, mT1,
          std::make_unique<LinearTimeWarper>(mT0, mT0, mT1, mT1Dashed )  };
-      success = EffectSoundTouch::ProcessWithTimeWarper(initer, warper, false);
+      success = EffectSoundTouch::ProcessWithTimeWarper(context,
+         initer, warper, false);
    }
 
    if(success)
@@ -193,7 +193,7 @@ bool EffectChangeTempo::Process(EffectInstance &, EffectSettings &settings)
    return success;
 }
 
-std::unique_ptr<EffectUIValidator> EffectChangeTempo::PopulateOrExchange(
+std::unique_ptr<EffectEditor> EffectChangeTempo::PopulateOrExchange(
    ShuttleGui & S, EffectInstance &, EffectSettingsAccess &,
    const EffectOutputs *)
 {

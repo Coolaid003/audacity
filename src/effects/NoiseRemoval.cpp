@@ -46,7 +46,6 @@
 #include "LoadEffects.h"
 
 #include "../WaveTrack.h"
-#include "Prefs.h"
 #include "FileNames.h"
 #include "../ShuttleGui.h"
 
@@ -157,6 +156,7 @@ bool EffectNoiseRemoval::CheckWhetherSkipEffect(const EffectSettings &) const
  then apply noise reduction to another selection.  That is difficult to fit into
  the framework for managing settings of other effects. */
 int EffectNoiseRemoval::ShowHostInterface(
+   const std::shared_ptr<EffectDialogFactory> &,
    wxWindow &parent, const EffectDialogFactory &,
    std::shared_ptr<EffectInstance> &pInstance, EffectSettingsAccess &access,
    bool forceModal )
@@ -215,7 +215,8 @@ int EffectNoiseRemoval::ShowHostInterface(
    return returnCode;
 }
 
-bool EffectNoiseRemoval::Process(EffectInstance &, EffectSettings &)
+bool EffectNoiseRemoval::Process(EffectContext &,
+   EffectInstance &, EffectSettings &)
 {
    Initialize();
 

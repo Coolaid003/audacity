@@ -18,7 +18,7 @@
 #ifndef __AUDACITY_GENERATOR__
 #define __AUDACITY_GENERATOR__
 
-#include "Effect.h"
+#include "StatefulEffect.h"
 #include "SampleCount.h"
 
 // Base class for Generators (effects which fill a given duration)
@@ -31,7 +31,7 @@ protected:
    // [ GenerateTrack() must be overridden by the actual generator class ]
    // Precondition:  mDuration > 0.0
    // Postcondition: <tmp> is filled with the data intended for <track>
-   virtual bool GenerateTrack(EffectSettings &settings,
+   virtual bool GenerateTrack(EffectContext &context, EffectSettings &settings,
       WaveTrack *tmp, const WaveTrack &track, int ntrack) = 0;
 
    // Actions to perform at the respective points in the generation process
@@ -49,7 +49,9 @@ protected:
    // Postcondition:
    // If mDuration was valid (>= 0), then the tracks are replaced by the
    // generated results and true is returned. Otherwise, return false.
-   AUDACITY_DLL_API bool Process(EffectInstance &instance, EffectSettings &settings) override;
+   AUDACITY_DLL_API
+   bool Process(EffectContext &context,
+      EffectInstance &instance, EffectSettings &settings) override;
 };
 
 // Abstract generator which creates the sound in discrete blocks, whilst
@@ -67,7 +69,7 @@ protected:
                               size_t block) = 0;
 
    // Generate the track, one block at a time, & adding the results to tmp
-   bool GenerateTrack(EffectSettings &settings,
+   bool GenerateTrack(EffectContext &context, EffectSettings &settings,
       WaveTrack *tmp, const WaveTrack &track, int ntrack) override;
 };
 

@@ -26,7 +26,8 @@
 
 #include <math.h>
 
-bool EffectSimpleMono::Process(EffectInstance &, EffectSettings &)
+bool EffectSimpleMono::Process(EffectContext &context,
+   EffectInstance &, EffectSettings &)
 {
    //Iterate over each track
    this->CopyInputTracks(); // Set up mOutputTracks.
@@ -57,8 +58,8 @@ bool EffectSimpleMono::Process(EffectInstance &, EffectSettings &)
 
          //NewTrackSimpleMono() will returns true by default
          //ProcessOne() processes a single track
-         if (!NewTrackSimpleMono() || !ProcessOne(pOutWaveTrack, start, end))
-         {
+         if (!NewTrackSimpleMono() ||
+            !ProcessOne(context, pOutWaveTrack, start, end)) {
             bGoodResult = false;
             break;
          }
@@ -74,8 +75,8 @@ bool EffectSimpleMono::Process(EffectInstance &, EffectSettings &)
 
 //ProcessOne() takes a track, transforms it to bunch of buffer-blocks,
 //and executes ProcessSimpleMono on these blocks
-bool EffectSimpleMono::ProcessOne(WaveTrack * track,
-                                  sampleCount start, sampleCount end)
+bool EffectSimpleMono::ProcessOne(EffectContext &context,
+   WaveTrack * track, sampleCount start, sampleCount end)
 {
    //Get the length of the buffer (as double). len is
    //used simple to calculate a progress meter, so it is easier
@@ -111,7 +112,7 @@ bool EffectSimpleMono::ProcessOne(WaveTrack * track,
       s += block;
 
       //Update the Progress meter
-      if (TrackProgress(mCurTrackNum,
+      if (context.TrackProgress(mCurTrackNum,
                         (s - start).as_double() /
                         len))
          return false;

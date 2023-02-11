@@ -11,7 +11,7 @@
 #ifndef __AUDACITY_EFFECT_REPEAT__
 #define __AUDACITY_EFFECT_REPEAT__
 
-#include "Effect.h"
+#include "StatefulEffect.h"
 #include "../ShuttleAutomation.h"
 
 class wxTextCtrl;
@@ -41,8 +41,9 @@ public:
 
    // Effect implementation
 
-   bool Process(EffectInstance &instance, EffectSettings &settings) override;
-   std::unique_ptr<EffectUIValidator> PopulateOrExchange(
+   bool Process(EffectContext &context,
+      EffectInstance &instance, EffectSettings &settings) override;
+   std::unique_ptr<EffectEditor> PopulateOrExchange(
       ShuttleGui & S, EffectInstance &instance,
       EffectSettingsAccess &access, const EffectOutputs *pOutputs) override;
    bool TransferDataToWindow(const EffectSettings &settings) override;

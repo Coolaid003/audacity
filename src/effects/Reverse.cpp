@@ -68,7 +68,8 @@ bool EffectReverse::IsInteractive() const
 
 // Effect implementation
 
-bool EffectReverse::Process(EffectInstance &, EffectSettings &)
+bool EffectReverse::Process(EffectContext &context,
+   EffectInstance &, EffectSettings &)
 {
    //all needed because Reverse should move the labels too
    this->CopyInputTracks(true); // Set up mOutputTracks.
@@ -84,7 +85,7 @@ bool EffectReverse::Process(EffectInstance &, EffectSettings &)
             auto end = track->TimeToLongSamples(mT1);
             auto len = end - start;
 
-            if (!ProcessOneWave(count, track, start, len))
+            if (!ProcessOneWave(context, count, track, start, len))
                bGoodResult = false;
          }
          count++;
@@ -99,7 +100,8 @@ bool EffectReverse::Process(EffectInstance &, EffectSettings &)
    return bGoodResult;
 }
 
-bool EffectReverse::ProcessOneWave(int count, WaveTrack * track, sampleCount start, sampleCount len)
+bool EffectReverse::ProcessOneWave(EffectContext &context, int count,
+   WaveTrack * track, sampleCount start, sampleCount len)
 {
    bool rValue = true; // return value
 
@@ -171,7 +173,8 @@ bool EffectReverse::ProcessOneWave(int count, WaveTrack * track, sampleCount sta
          auto revEnd = (clipEnd >= end)? end: clipEnd;
          auto revLen = revEnd - revStart;
          if (revEnd >= revStart) {
-            if(!ProcessOneClip(count, track, revStart, revLen, start, end)) // reverse the clip
+            if(!ProcessOneClip(context,
+               count, track, revStart, revLen, start, end)) // reverse the clip
             {
                rValue = false;
                break;
@@ -211,9 +214,9 @@ bool EffectReverse::ProcessOneWave(int count, WaveTrack * track, sampleCount sta
    return rValue;
 }
 
-bool EffectReverse::ProcessOneClip(int count, WaveTrack *track,
-                               sampleCount start, sampleCount len,
-                               sampleCount originalStart, sampleCount originalEnd)
+bool EffectReverse::ProcessOneClip(EffectContext &context,
+   int count, WaveTrack *track, sampleCount start, sampleCount len,
+   sampleCount originalStart, sampleCount originalEnd)
 {
    bool rc = true;
    // keep track of two blocks whose data we will swap
@@ -247,8 +250,9 @@ bool EffectReverse::ProcessOneClip(int count, WaveTrack *track,
       len -= 2 * block;
       first += block;
 
-      if( TrackProgress(count, 2 * ( first - originalStart ).as_double() /
-                        originalLen.as_double() ) ) {
+      if( context.TrackProgress(
+         count, 2 * ( first - originalStart ).as_double() /
+         originalLen.as_double() ) ) {
          rc = false;
          break;
       }

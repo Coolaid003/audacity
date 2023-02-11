@@ -775,7 +775,9 @@ void OnManageGenerators(const CommandContext &context)
 void OnEffect(const CommandContext &context)
 {
    // using GET to interpret parameter as a PluginID
-   EffectUI::DoEffect(context.parameter.GET(), context, 0);
+   // EffectContext construction
+   auto pContext = std::make_shared<EffectContext>();
+   EffectUI::DoEffect(context.project, pContext, context.parameter.GET());
 }
 
 void OnManageEffects(const CommandContext &context)
@@ -796,10 +798,11 @@ void OnRepeatLastGenerator(const CommandContext &context)
 {
    auto& menuManager = MenuManager::Get(context.project);
    auto lastEffect = menuManager.mLastGenerator;
-   if (!lastEffect.empty())
-   {
-      EffectUI::DoEffect(
-         lastEffect, context, menuManager.mRepeatGeneratorFlags | EffectManager::kRepeatGen);
+   if (!lastEffect.empty()) {
+      // EffectContext construction
+      auto pContext = std::make_shared<EffectContext>(
+         menuManager.mRepeatGeneratorFlags | EffectManager::kRepeatGen);
+      EffectUI::DoEffect(context.project, pContext, lastEffect);
    }
 }
 
@@ -807,10 +810,11 @@ void OnRepeatLastEffect(const CommandContext &context)
 {
    auto& menuManager = MenuManager::Get(context.project);
    auto lastEffect = menuManager.mLastEffect;
-   if (!lastEffect.empty())
-   {
-      EffectUI::DoEffect(
-         lastEffect, context, menuManager.mRepeatEffectFlags);
+   if (!lastEffect.empty()) {
+      // EffectContext construction
+      auto pContext =
+         std::make_shared<EffectContext>(menuManager.mRepeatEffectFlags);
+      EffectUI::DoEffect(context.project, pContext, lastEffect);
    }
 }
 
@@ -818,16 +822,16 @@ void OnRepeatLastAnalyzer(const CommandContext& context)
 {
    auto& menuManager = MenuManager::Get(context.project);
    switch (menuManager.mLastAnalyzerRegistration) {
-   case MenuCreator::repeattypeplugin:
-     {
-       auto lastEffect = menuManager.mLastAnalyzer;
-       if (!lastEffect.empty())
-       {
-         EffectUI::DoEffect(
-            lastEffect, context, menuManager.mRepeatAnalyzerFlags);
-       }
-     }
-      break;
+   case MenuCreator::repeattypeplugin: {
+      auto lastEffect = menuManager.mLastAnalyzer;
+      if (!lastEffect.empty()) {
+         // EffectContext construction
+         auto pContext =
+            std::make_shared<EffectContext>(menuManager.mRepeatAnalyzerFlags);
+         EffectUI::DoEffect(context.project, pContext, lastEffect);
+      }
+   }
+   break;
    case MenuCreator::repeattypeunique:
       CommandManager::Get(context.project).DoRepeatProcess(context,
          menuManager.mLastAnalyzerRegisteredId);

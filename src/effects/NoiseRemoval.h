@@ -16,7 +16,7 @@
 
 #if !defined(EXPERIMENTAL_NOISE_REDUCTION)
 
-#include "Effect.h"
+#include "StatefulEffect.h"
 #include "EffectUI.h"
 
 class wxButton;
@@ -53,13 +53,14 @@ public:
 
    // Effect implementation
 
-   int ShowHostInterface( wxWindow &parent,
-      const EffectDialogFactory &factory,
+   int ShowHostInterface(const std::shared_ptr<EffectContext> &pContext,
+      EffectPlugin &plugin, wxWindow &parent, const EffectDialogFactory &factory,
       std::shared_ptr<EffectInstance> &pInstance, EffectSettingsAccess &access,
       bool forceModal = false) override;
    bool Init() override;
    bool CheckWhetherSkipEffect(const EffectSettings &settings) const override;
-   bool Process(EffectInstance &instance, EffectSettings &settings) override;
+   bool Process(EffectContext &context,
+      EffectInstance &instance, EffectSettings &settings) override;
    void End() override;
 
 private:

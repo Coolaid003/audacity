@@ -16,7 +16,7 @@ class wxString;
 
 class LabelTrack;
 
-#include "Effect.h"
+#include "StatefulEffect.h"
 #include "../ShuttleAutomation.h"
 
 class EffectFindClipping final : public StatefulEffect
@@ -41,8 +41,9 @@ public:
 
    // Effect implementation
 
-   bool Process(EffectInstance &instance, EffectSettings &settings) override;
-   std::unique_ptr<EffectUIValidator> PopulateOrExchange(
+   bool Process(EffectContext &context,
+      EffectInstance &instance, EffectSettings &settings) override;
+   std::unique_ptr<EffectEditor> PopulateOrExchange(
       ShuttleGui & S, EffectInstance &instance,
       EffectSettingsAccess &access, const EffectOutputs *pOutputs) override;
    void DoPopulateOrExchange(
@@ -53,8 +54,8 @@ public:
 private:
    // EffectFindCliping implementation
 
-   bool ProcessOne(LabelTrack *lt, int count, const WaveTrack * wt,
-                   sampleCount start, sampleCount len);
+   bool ProcessOne(EffectContext &context, LabelTrack *lt,
+      int count, const WaveTrack * wt, sampleCount start, sampleCount len);
 
    wxWeakRef<wxWindow> mUIParent{};
 

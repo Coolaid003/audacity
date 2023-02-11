@@ -17,14 +17,15 @@
 #ifndef __AUDACITY_EFFECT_SIMPLE_MONO__
 #define __AUDACITY_EFFECT_SIMPLE_MONO__
 
-#include "Effect.h"
+#include "StatefulEffect.h"
 
 class WaveTrack;
 
 class EffectSimpleMono /* not final */ : public StatefulEffect
 {
 public:
-   bool Process(EffectInstance &instance, EffectSettings &settings) override;
+   bool Process(EffectContext &context,
+      EffectInstance &instance, EffectSettings &settings) override;
 
 protected:
 
@@ -45,7 +46,8 @@ protected:
    int    mCurChannel;
 
 private:
-   bool ProcessOne(WaveTrack * t, sampleCount start, sampleCount end);
+   bool ProcessOne(EffectContext &context,
+      WaveTrack * t, sampleCount start, sampleCount end);
 };
 
 #endif

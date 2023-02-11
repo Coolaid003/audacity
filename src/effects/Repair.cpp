@@ -71,7 +71,8 @@ bool EffectRepair::IsInteractive() const
 
 // Effect implementation
 
-bool EffectRepair::Process(EffectInstance &, EffectSettings &)
+bool EffectRepair::Process(EffectContext &context,
+   EffectInstance &, EffectSettings &)
 {
    //v This may be too much copying for EffectRepair. To support Cancel, may be able to copy much less.
    //  But for now, Cancel isn't supported without this.
@@ -120,7 +121,7 @@ bool EffectRepair::Process(EffectInstance &, EffectSettings &)
             break;
          }
 
-         if (!ProcessOne(count, track, s0,
+         if (!ProcessOne(context, count, track, s0,
                          // len is at most 5 * 128.
                          len.as_size_t(),
                          repairStart,
@@ -138,10 +139,9 @@ bool EffectRepair::Process(EffectInstance &, EffectSettings &)
    return bGoodResult;
 }
 
-bool EffectRepair::ProcessOne(int count, WaveTrack * track,
-                              sampleCount start,
-                              size_t len,
-                              size_t repairStart, size_t repairLen)
+bool EffectRepair::ProcessOne(EffectContext &context, int count,
+   WaveTrack * track, sampleCount start, size_t len,
+   size_t repairStart, size_t repairLen)
 {
    Floats buffer{ len };
    track->GetFloats(buffer.get(), start, len);
@@ -151,7 +151,8 @@ bool EffectRepair::ProcessOne(int count, WaveTrack * track,
       // little repairs shouldn't force dither on rendering:
       narrowestSampleFormat
    );
-   return !TrackProgress(count, 1.0); // TrackProgress returns true on Cancel.
+   // TrackProgress returns true on Cancel.
+   return !context.TrackProgress(count, 1.0);
 }
 
 bool EffectRepair::NeedsDither() const

@@ -17,10 +17,8 @@
 \brief FindClippingDialog used with EffectFindClipping
 
 *//*******************************************************************/
-
-
-
 #include "FindClipping.h"
+#include "EffectEditor.h"
 #include "LoadEffects.h"
 
 #include <math.h>
@@ -81,7 +79,8 @@ EffectType EffectFindClipping::GetType() const
 
 // Effect implementation
 
-bool EffectFindClipping::Process(EffectInstance &, EffectSettings &)
+bool EffectFindClipping::Process(EffectContext &context,
+   EffectInstance &, EffectSettings &)
 {
    std::shared_ptr<AddedAnalysisTrack> addedTrack;
    std::optional<ModifiedAnalysisTrack> modifiedTrack;
@@ -111,7 +110,7 @@ bool EffectFindClipping::Process(EffectInstance &, EffectSettings &)
          auto end = t->TimeToLongSamples(t1);
          auto len = end - start;
 
-         if (!ProcessOne(lt, count, t, start, len)) {
+         if (!ProcessOne(context, lt, count, t, start, len)) {
             return false;
          }
       }
@@ -127,11 +126,9 @@ bool EffectFindClipping::Process(EffectInstance &, EffectSettings &)
    return true;
 }
 
-bool EffectFindClipping::ProcessOne(LabelTrack * lt,
-                                    int count,
-                                    const WaveTrack * wt,
-                                    sampleCount start,
-                                    sampleCount len)
+bool EffectFindClipping::ProcessOne(EffectContext &context,
+   LabelTrack * lt, int count, const WaveTrack * wt,
+   sampleCount start, sampleCount len)
 {
    bool bGoodResult = true;
    size_t blockSize = (mStart * 1000);
@@ -162,7 +159,7 @@ bool EffectFindClipping::ProcessOne(LabelTrack * lt,
 
    while (s < len) {
       if (block == 0) {
-         if (TrackProgress(count,
+         if (context.TrackProgress(count,
                            s.as_double() /
                            len.as_double() )) {
             bGoodResult = false;
@@ -213,7 +210,7 @@ bool EffectFindClipping::ProcessOne(LabelTrack * lt,
    return bGoodResult;
 }
 
-std::unique_ptr<EffectUIValidator> EffectFindClipping::PopulateOrExchange(
+std::unique_ptr<EffectEditor> EffectFindClipping::PopulateOrExchange(
    ShuttleGui & S, EffectInstance &, EffectSettingsAccess &access,
    const EffectOutputs *)
 {

@@ -51,6 +51,7 @@ effects from this one class.
 #include <wx/stdpaths.h>
 
 #include "BasicUI.h"
+#include "../EffectEditor.h"
 #include "../EffectManager.h"
 #include "FileNames.h"
 #include "../../LabelTrack.h"
@@ -71,7 +72,6 @@ effects from this one class.
 #include "../../WaveTrack.h"
 #include "../../widgets/valnum.h"
 #include "../../widgets/AudacityMessageBox.h"
-#include "Prefs.h"
 #include "wxFileNameWrapper.h"
 #include "../../prefs/GUIPrefs.h"
 #include "../../tracks/playabletrack/wavetrack/ui/WaveTrackView.h"
@@ -660,7 +660,8 @@ bool NyquistEffect::Init()
 
 static void RegisterFunctions();
 
-bool NyquistEffect::Process(EffectInstance &, EffectSettings &settings)
+bool NyquistEffect::Process(EffectContext &context,
+   EffectInstance &, EffectSettings &settings)
 {
    if (mIsPrompt && mControls.size() > 0 && !IsBatchProcessing()) {
       auto &nyquistSettings = GetSettings(settings);
@@ -672,7 +673,7 @@ bool NyquistEffect::Process(EffectInstance &, EffectSettings &settings)
       proxy.SetCommand(mInputCmd);
       proxy.mDebug = nyquistSettings.proxyDebug;
       proxy.mControls = move(nyquistSettings.controls);
-      auto result = Delegate(proxy, nyquistSettings.proxySettings);
+      auto result = Delegate(context, proxy, nyquistSettings.proxySettings);
       if (result) {
          mT0 = proxy.mT0;
          mT1 = proxy.mT1;
@@ -697,7 +698,7 @@ bool NyquistEffect::Process(EffectInstance &, EffectSettings &settings)
    int nEffectsSoFar = nEffectsDone;
    mProjectChanged = false;
    EffectManager & em = EffectManager::Get();
-   em.SetSkipStateFlag(false);
+   context.skipState = false;
 
    // This code was added in a fix for bug 2392 (no preview for Nyquist)
    // It was commented out in a fix for bug 2428 (no progress dialog from a macro)
@@ -710,7 +711,7 @@ bool NyquistEffect::Process(EffectInstance &, EffectSettings &settings)
    mProgressIn = 0;
    mProgressOut = 0;
    mProgressTot = 0;
-   mScale = (GetType() == EffectTypeProcess ? 0.5 : 1.0) / GetNumWaveGroups();
+   mScale = (GetType() == EffectTypeProcess ? 0.5 : 1.0) / context.numGroups;
 
    mStop = false;
    mBreak = false;
@@ -837,13 +838,12 @@ bool NyquistEffect::Process(EffectInstance &, EffectSettings &settings)
       mProps += wxString::Format(wxT("(putprop '*PROJECT* %d 'MIDITRACKS)\n"), numMidi);
       mProps += wxString::Format(wxT("(putprop '*PROJECT* %d 'TIMETRACKS)\n"), numTime);
 
-      double previewLen = 6.0;
-      gPrefs->Read(wxT("/AudioIO/EffectsPreviewLen"), &previewLen);
+      auto previewLen = EffectPreviewLength.Read();
       mProps += wxString::Format(wxT("(putprop '*PROJECT* (float %s) 'PREVIEW-DURATION)\n"),
                                  Internat::ToString(previewLen));
 
       // *PREVIEWP* is true when previewing (better than relying on track view).
-      wxString isPreviewing = (this->IsPreviewing())? wxT("T") : wxT("NIL");
+      wxString isPreviewing = (context.isPreviewing)? wxT("T") : wxT("NIL");
       mProps += wxString::Format(wxT("(setf *PREVIEWP* %s)\n"), isPreviewing);
 
       mProps += wxString::Format(wxT("(putprop '*SELECTION* (float %s) 'START)\n"),
@@ -926,7 +926,7 @@ bool NyquistEffect::Process(EffectInstance &, EffectSettings &settings)
                   wxOK | wxCENTRE,
                   XO("Nyquist Error") );
                if (!mProjectChanged)
-                  em.SetSkipStateFlag(true);
+                  context.skipState = true;
                return false;
             }
 
@@ -996,7 +996,7 @@ bool NyquistEffect::Process(EffectInstance &, EffectSettings &settings)
             mPerTrackProps += wxString::Format(wxT("(putprop '*SELECTION* %s 'BANDWIDTH)\n"), bandwidth);
          }
 
-         success = ProcessOne();
+         success = ProcessOne(context);
 
          // Reset previous locale
          wxSetlocale(LC_NUMERIC, prevlocale);
@@ -1048,20 +1048,21 @@ finish:
    }
 
    if (!mProjectChanged)
-      em.SetSkipStateFlag(true);
+      context.skipState = true;
 
    return success;
 }
 
 int NyquistEffect::ShowHostInterface(
-   wxWindow &parent, const EffectDialogFactory &factory,
+   const std::shared_ptr<EffectContext> &pContext,
+   EffectPlugin &plugin, wxWindow &parent, const EffectDialogFactory &factory,
    std::shared_ptr<EffectInstance> &pInstance, EffectSettingsAccess &access,
    bool forceModal)
 {
    int res = wxID_APPLY;
-   if (!(Effect::TestUIFlags(EffectManager::kRepeatNyquistPrompt) && mIsPrompt)) {
+   if (!(pContext->TestUIFlags(EffectManager::kRepeatNyquistPrompt) && mIsPrompt)) {
       // Show the normal (prompt or effect) interface
-      res = Effect::ShowHostInterface(
+      res = EffectUIServices::ShowHostInterface(pContext, plugin,
          parent, factory, pInstance, access, forceModal);
    }
 
@@ -1100,7 +1101,8 @@ int NyquistEffect::ShowHostInterface(
       effect.LoadSettings(cp, newSettings);
 
       // Show the normal (prompt or effect) interface
-      res = effect.ShowHostInterface(
+      // Don't pass this as first argument, pass the worker to itself
+      res = effect.ShowHostInterface(pContext, effect,
          parent, factory, pNewInstance, *newAccess, forceModal);
       if (res) {
          CommandParameters cp;
@@ -1111,7 +1113,8 @@ int NyquistEffect::ShowHostInterface(
    else {
       if (!factory)
          return 0;
-      res = effect.ShowHostInterface(
+      // Don't pass this as first argument, pass the worker to itself
+      res = effect.ShowHostInterface(pContext, effect,
          parent, factory, pNewInstance, *newAccess, false );
       if (!res)
          return 0;
@@ -1131,7 +1134,7 @@ int NyquistEffect::ShowHostInterface(
    return res;
 }
 
-std::unique_ptr<EffectUIValidator> NyquistEffect::PopulateOrExchange(
+std::unique_ptr<EffectEditor> NyquistEffect::PopulateOrExchange(
    ShuttleGui & S, EffectInstance &, EffectSettingsAccess &,
    const EffectOutputs *)
 {
@@ -1164,7 +1167,7 @@ bool NyquistEffect::TransferDataToWindow(const EffectSettings &)
 
    if (success)
    {
-      EffectUIValidator::EnablePreview(mUIParent, mEnablePreview);
+      EffectEditor::EnablePreview(mUIParent, mEnablePreview);
    }
 
    return success;
@@ -1184,10 +1187,13 @@ bool NyquistEffect::TransferDataFromWindow(EffectSettings &)
    return TransferDataFromEffectWindow();
 }
 
+struct CallbackData{ NyquistEffect &effect; EffectContext &context; };
+
 // NyquistEffect implementation
 
-bool NyquistEffect::ProcessOne()
+bool NyquistEffect::ProcessOne(EffectContext &context)
 {
+   CallbackData data{ *this, context };
    mpException = {};
 
    nyx_rval rval;
@@ -1378,7 +1384,7 @@ bool NyquistEffect::ProcessOne()
       auto curLen = mCurLen.as_long_long();
       nyx_set_audio_params(mCurTrack[0]->GetRate(), curLen);
 
-      nyx_set_input_audio(StaticGetCallback, (void *)this,
+      nyx_set_input_audio(StaticGetCallback, &data,
                           (int)mCurNumChannels,
                           curLen, mCurTrack[0]->GetRate());
    }
@@ -1495,10 +1501,10 @@ bool NyquistEffect::ProcessOne()
    // so notify the user that process has completed (bug 558)
    if ((rval != nyx_audio) && ((mCount + mCurNumChannels) == mNumSelectedChannels)) {
       if (mCurNumChannels == 1) {
-         TrackProgress(mCount, 1.0, XO("Processing complete."));
+         context.TrackProgress(mCount, 1.0, XO("Processing complete."));
       }
       else {
-         TrackGroupProgress(mCount, 1.0, XO("Processing complete."));
+         context.TrackGroupProgress(mCount, 1.0, XO("Processing complete."));
       }
    }
 
@@ -1653,7 +1659,7 @@ bool NyquistEffect::ProcessOne()
    {
       auto vr0 = valueRestorer( mOutputTrack[0], outputTrack[0].get() );
       auto vr1 = valueRestorer( mOutputTrack[1], outputTrack[1].get() );
-      success = nyx_get_audio(StaticPutCallback, (void *)this);
+      success = nyx_get_audio(StaticPutCallback, &data);
    }
 
    // See if GetCallback found read errors
@@ -2505,12 +2511,13 @@ int NyquistEffect::StaticGetCallback(float *buffer, int channel,
                                      int64_t start, int64_t len, int64_t totlen,
                                      void *userdata)
 {
-   NyquistEffect *This = (NyquistEffect *)userdata;
-   return This->GetCallback(buffer, channel, start, len, totlen);
+   auto pData = static_cast<CallbackData*>(userdata);
+   return pData->effect.GetCallback(pData->context,
+      buffer, channel, start, len, totlen);
 }
 
-int NyquistEffect::GetCallback(float *buffer, int ch,
-                               int64_t start, int64_t len, int64_t WXUNUSED(totlen))
+int NyquistEffect::GetCallback(EffectContext &context,
+   float *buffer, int ch, int64_t start, int64_t len, int64_t)
 {
    if (mCurBuffer[ch]) {
       if ((mCurStart[ch] + start) < mCurBufferStart[ch] ||
@@ -2560,7 +2567,7 @@ int NyquistEffect::GetCallback(float *buffer, int ch,
          mProgressIn = progress;
       }
 
-      if (TotalProgress(mProgressIn+mProgressOut+mProgressTot)) {
+      if (context.TotalProgress(mProgressIn+mProgressOut+mProgressTot)) {
          return -1;
       }
    }
@@ -2572,12 +2579,14 @@ int NyquistEffect::StaticPutCallback(float *buffer, int channel,
                                      int64_t start, int64_t len, int64_t totlen,
                                      void *userdata)
 {
-   NyquistEffect *This = (NyquistEffect *)userdata;
-   return This->PutCallback(buffer, channel, start, len, totlen);
+   auto pData = static_cast<CallbackData *>(userdata);
+   return pData->effect.PutCallback(pData->context,
+      buffer, channel, start, len, totlen);
 }
 
-int NyquistEffect::PutCallback(float *buffer, int channel,
-                               int64_t start, int64_t len, int64_t totlen)
+int NyquistEffect::PutCallback(EffectContext &context,
+   float *buffer, int channel,
+   int64_t start, int64_t len, int64_t totlen)
 {
    // Don't let C++ exceptions propagate through the Nyquist library
    return GuardedCall<int>( [&] {
@@ -2588,7 +2597,8 @@ int NyquistEffect::PutCallback(float *buffer, int channel,
             mProgressOut = progress;
          }
 
-         if (TotalProgress(mProgressIn+mProgressOut+mProgressTot)) {
+         if (context.TotalProgress(
+            mProgressIn+mProgressOut + mProgressTot)) {
             return -1;
          }
       }

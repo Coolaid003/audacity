@@ -17,7 +17,6 @@
 #include "Generator.h"
 
 #include "Project.h"
-#include "Prefs.h"
 #include "SyncLock.h"
 #include "ViewInfo.h"
 #include "../WaveTrack.h"
@@ -27,7 +26,8 @@
 
 #include "../widgets/AudacityMessageBox.h"
 
-bool Generator::Process(EffectInstance &, EffectSettings &settings)
+bool Generator::Process(EffectContext &context,
+   EffectInstance &, EffectSettings &settings)
 {
    const auto duration = settings.extra.GetDuration();
 
@@ -70,7 +70,7 @@ bool Generator::Process(EffectInstance &, EffectSettings &settings)
             BeforeGenerate();
 
             // Fill it with data
-            if (!GenerateTrack(settings, &*tmp, *track, ntrack))
+            if (!GenerateTrack(context, settings, &*tmp, *track, ntrack))
                bGoodResult = false;
             else {
                // Transfer the data from the temporary track to the actual one
@@ -115,7 +115,8 @@ bool Generator::Process(EffectInstance &, EffectSettings &settings)
    return bGoodResult;
 }
 
-bool BlockGenerator::GenerateTrack(EffectSettings &settings,
+bool BlockGenerator::GenerateTrack(EffectContext &context,
+   EffectSettings &settings,
    WaveTrack *tmp, const WaveTrack &track, int ntrack)
 {
    bool bGoodResult = true;
@@ -134,7 +135,7 @@ bool BlockGenerator::GenerateTrack(EffectSettings &settings,
       i += block;
 
       // Update the progress meter
-      if (TrackProgress(ntrack,
+      if (context.TrackProgress(ntrack,
                         i.as_double() /
                         numSamples.as_double()))
          bGoodResult = false;

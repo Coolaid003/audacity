@@ -13,10 +13,8 @@
 \brief An Effect to bring the peak level up to a chosen level.
 
 *//*******************************************************************/
-
-
-
 #include "Normalize.h"
+#include "EffectEditor.h"
 #include "LoadEffects.h"
 
 #include <math.h>
@@ -25,7 +23,6 @@
 #include <wx/stattext.h>
 #include <wx/valgen.h>
 
-#include "Prefs.h"
 #include "../ProjectFileManager.h"
 #include "../ShuttleGui.h"
 #include "../WaveTrack.h"
@@ -91,7 +88,8 @@ bool EffectNormalize::CheckWhetherSkipEffect(const EffectSettings &) const
    return ((mGain == false) && (mDC == false));
 }
 
-bool EffectNormalize::Process(EffectInstance &, EffectSettings &)
+bool EffectNormalize::Process(EffectContext &context,
+   EffectInstance &, EffectSettings &)
 {
    if (mGain == false && mDC == false)
       return true;
@@ -158,7 +156,7 @@ bool EffectNormalize::Process(EffectInstance &, EffectSettings &)
             float offset = 0;
             float extent2 = 0;
             bGoodResult =
-               AnalyseTrack( channel, msg, progress, offset, extent2 );
+               AnalyseTrack(context, channel, msg, progress, offset, extent2);
             if ( ! bGoodResult )
                goto break2;
             extent = std::max( extent, extent2 );
@@ -195,7 +193,8 @@ bool EffectNormalize::Process(EffectInstance &, EffectSettings &)
          auto pOffset = offsets.begin();
          for (auto channel : range) {
             if (false ==
-                (bGoodResult = ProcessOne(channel, msg, progress, *pOffset++)) )
+                (bGoodResult =
+                    ProcessOne(context, channel, msg, progress, *pOffset++)))
                goto break2;
             // TODO: more-than-two-channels-message
             msg = topMsg +
@@ -210,7 +209,7 @@ bool EffectNormalize::Process(EffectInstance &, EffectSettings &)
    return bGoodResult;
 }
 
-std::unique_ptr<EffectUIValidator> EffectNormalize::PopulateOrExchange(
+std::unique_ptr<EffectEditor> EffectNormalize::PopulateOrExchange(
    ShuttleGui & S, EffectInstance &, EffectSettingsAccess &,
    const EffectOutputs *)
 {
@@ -289,8 +288,9 @@ bool EffectNormalize::TransferDataFromWindow(EffectSettings &)
 
 // EffectNormalize implementation
 
-bool EffectNormalize::AnalyseTrack(const WaveTrack * track, const TranslatableString &msg,
-                                   double &progress, float &offset, float &extent)
+bool EffectNormalize::AnalyseTrack(EffectContext &context,
+   const WaveTrack * track, const TranslatableString &msg,
+   double &progress, float &offset, float &extent)
 {
    bool result = true;
    float min, max;
@@ -303,7 +303,7 @@ bool EffectNormalize::AnalyseTrack(const WaveTrack * track, const TranslatableSt
 
       if(mDC)
       {
-         result = AnalyseTrackData(track, msg, progress, offset);
+         result = AnalyseTrackData(context, track, msg, progress, offset);
          min += offset;
          max += offset;
       }
@@ -311,7 +311,7 @@ bool EffectNormalize::AnalyseTrack(const WaveTrack * track, const TranslatableSt
    else if(mDC)
    {
       min = -1.0, max = 1.0;   // sensible defaults?
-      result = AnalyseTrackData(track, msg, progress, offset);
+      result = AnalyseTrackData(context, track, msg, progress, offset);
       min += offset;
       max += offset;
    }
@@ -328,8 +328,9 @@ bool EffectNormalize::AnalyseTrack(const WaveTrack * track, const TranslatableSt
 
 //AnalyseTrackData() takes a track, transforms it to bunch of buffer-blocks,
 //and executes selected AnalyseOperation on it...
-bool EffectNormalize::AnalyseTrackData(const WaveTrack * track, const TranslatableString &msg,
-                                double &progress, float &offset)
+bool EffectNormalize::AnalyseTrackData(EffectContext &context,
+   const WaveTrack * track, const TranslatableString &msg,
+   double &progress, float &offset)
 {
    bool rc = true;
 
@@ -373,8 +374,10 @@ bool EffectNormalize::AnalyseTrackData(const WaveTrack * track, const Translatab
       s += block;
 
       //Update the Progress meter
-      if (TotalProgress(progress +
-                        ((s - start).as_double() / len)/double(2*GetNumWaveTracks()), msg)) {
+      if (context.TotalProgress(
+         progress + ((s - start).as_double() / len)
+            / double(2 * context.numTracks), msg))
+      {
          rc = false; //lda .. break, not return, so that buffer is deleted
          break;
       }
@@ -384,7 +387,7 @@ bool EffectNormalize::AnalyseTrackData(const WaveTrack * track, const Translatab
    else
       offset = 0.0;
 
-   progress += 1.0/double(2*GetNumWaveTracks());
+   progress += 1.0/double(2 * context.numTracks);
    //Return true because the effect processing succeeded ... unless cancelled
    return rc;
 }
@@ -393,8 +396,9 @@ bool EffectNormalize::AnalyseTrackData(const WaveTrack * track, const Translatab
 //and executes ProcessData, on it...
 // uses mMult and offset to normalize a track.
 // mMult must be set before this is called
-bool EffectNormalize::ProcessOne(
-   WaveTrack * track, const TranslatableString &msg, double &progress, float offset)
+bool EffectNormalize::ProcessOne(EffectContext &context,
+   WaveTrack * track, const TranslatableString &msg,
+   double &progress, float offset)
 {
    bool rc = true;
 
@@ -435,13 +439,15 @@ bool EffectNormalize::ProcessOne(
       s += block;
 
       //Update the Progress meter
-      if (TotalProgress(progress +
-                        ((s - start).as_double() / len)/double(2*GetNumWaveTracks()), msg)) {
+      if (context.TotalProgress(progress +
+         ((s - start).as_double() / len)
+            / double(2 * context.numTracks), msg))
+      {
          rc = false; //lda .. break, not return, so that buffer is deleted
          break;
       }
    }
-   progress += 1.0/double(2*GetNumWaveTracks());
+   progress += 1.0 / double(2 * context.numTracks);
 
    //Return true because the effect processing succeeded ... unless cancelled
    return rc;
@@ -473,7 +479,7 @@ void EffectNormalize::UpdateUI()
    if (!mUIParent->TransferDataFromWindow())
    {
       mWarning->SetLabel(_("(Maximum 0dB)"));
-      EffectUIValidator::EnableApply(mUIParent, false);
+      EffectEditor::EnableApply(mUIParent, false);
       return;
    }
    mWarning->SetLabel(wxT(""));
@@ -484,5 +490,5 @@ void EffectNormalize::UpdateUI()
    mStereoIndCheckBox->Enable(mGain);
 
    // Disallow OK/Preview if doing nothing
-   EffectUIValidator::EnableApply(mUIParent, mGain || mDC);
+   EffectEditor::EnableApply(mUIParent, mGain || mDC);
 }

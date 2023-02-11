@@ -13,7 +13,7 @@
 #ifndef __AUDACITY_EFFECT_REVERSE__
 #define __AUDACITY_EFFECT_REVERSE__
 
-#include "Effect.h"
+#include "StatefulEffect.h"
 
 class EffectReverse final : public StatefulEffect
 {
@@ -35,14 +35,17 @@ public:
 
    // Effect implementation
 
-   bool Process(EffectInstance &instance, EffectSettings &settings) override;
+   bool Process(EffectContext &context,
+      EffectInstance &instance, EffectSettings &settings) override;
 
 private:
    // EffectReverse implementation
 
-   bool ProcessOneClip(int count, WaveTrack* track,
-                   sampleCount start, sampleCount len, sampleCount originalStart, sampleCount originalEnd);
-   bool ProcessOneWave(int count, WaveTrack* track, sampleCount start, sampleCount len);
+   bool ProcessOneClip(EffectContext &context, int count, WaveTrack* track,
+      sampleCount start, sampleCount len,
+      sampleCount originalStart, sampleCount originalEnd);
+   bool ProcessOneWave(EffectContext &context, int count,
+      WaveTrack* track, sampleCount start, sampleCount len);
  };
 
 #endif

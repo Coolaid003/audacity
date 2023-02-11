@@ -12,7 +12,7 @@
 #ifndef __AUDACITY_EFFECT_NORMALIZE__
 #define __AUDACITY_EFFECT_NORMALIZE__
 
-#include "Effect.h"
+#include "StatefulEffect.h"
 #include "Biquad.h"
 #include "../ShuttleAutomation.h"
 
@@ -44,8 +44,9 @@ public:
    // Effect implementation
 
    bool CheckWhetherSkipEffect(const EffectSettings &settings) const override;
-   bool Process(EffectInstance &instance, EffectSettings &settings) override;
-   std::unique_ptr<EffectUIValidator> PopulateOrExchange(
+   bool Process(EffectContext &context,
+      EffectInstance &instance, EffectSettings &settings) override;
+   std::unique_ptr<EffectEditor> PopulateOrExchange(
       ShuttleGui & S, EffectInstance &instance,
       EffectSettingsAccess &access, const EffectOutputs *pOutputs) override;
    bool TransferDataToWindow(const EffectSettings &settings) override;
@@ -54,12 +55,14 @@ public:
 private:
    // EffectNormalize implementation
 
-   bool ProcessOne(
+   bool ProcessOne(EffectContext &context,
       WaveTrack * t, const TranslatableString &msg, double& progress, float offset);
-   bool AnalyseTrack(const WaveTrack * track, const TranslatableString &msg,
-                     double &progress, float &offset, float &extent);
-   bool AnalyseTrackData(const WaveTrack * track, const TranslatableString &msg, double &progress,
-                     float &offset);
+   bool AnalyseTrack(EffectContext &context,
+      const WaveTrack * track, const TranslatableString &msg,
+      double &progress, float &offset, float &extent);
+   bool AnalyseTrackData(EffectContext &context,
+      const WaveTrack * track, const TranslatableString &msg, double &progress,
+      float &offset);
    void AnalyseDataDC(float *buffer, size_t len);
    void ProcessData(float *buffer, size_t len, float offset);
 

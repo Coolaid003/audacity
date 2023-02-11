@@ -17,7 +17,7 @@
 #ifndef __AUDACITY_EFFECT_TRUNC_SILENCE__
 #define __AUDACITY_EFFECT_TRUNC_SILENCE__
 
-#include "Effect.h"
+#include "StatefulEffect.h"
 #include "../ShuttleAutomation.h"
 
 class ShuttleGui;
@@ -51,23 +51,24 @@ public:
 
    // Effect implementation
 
-   double CalcPreviewInputLength(
+   double CalcPreviewInputLength(const EffectContext &context,
       const EffectSettings &settings, double previewLength) const override;
 
    // Analyze a single track to find silences
    // If inputLength is not NULL we are calculating the minimum
    // amount of input for previewing.
-   bool Analyze(RegionList &silenceList,
-                        RegionList &trackSilences,
-                        const WaveTrack *wt,
-                        sampleCount* silentFrame,
-                        sampleCount* index,
-                        int whichTrack,
-                        double* inputLength = NULL,
-                        double* minInputLength = NULL) const;
+   bool Analyze(const EffectContext &context, RegionList &silenceList,
+      RegionList &trackSilences,
+      const WaveTrack *wt,
+      sampleCount* silentFrame,
+      sampleCount* index,
+      int whichTrack,
+      double* inputLength = NULL,
+      double* minInputLength = NULL) const;
 
-   bool Process(EffectInstance &instance, EffectSettings &settings) override;
-   std::unique_ptr<EffectUIValidator> PopulateOrExchange(
+   bool Process(EffectContext &context,
+      EffectInstance &instance, EffectSettings &settings) override;
+   std::unique_ptr<EffectEditor> PopulateOrExchange(
       ShuttleGui & S, EffectInstance &instance,
       EffectSettingsAccess &access, const EffectOutputs *pOutputs) override;
    bool TransferDataToWindow(const EffectSettings &settings) override;
@@ -85,14 +86,14 @@ private:
    void OnControlChange(wxCommandEvent & evt);
    void UpdateUI();
 
-   bool ProcessIndependently();
-   bool ProcessAll();
-   bool FindSilences
-      (RegionList &silences, const TrackList *list,
-       const Track *firstTrack, const Track *lastTrack);
-   bool DoRemoval
-      (const RegionList &silences, unsigned iGroup, unsigned nGroups, Track *firstTrack, Track *lastTrack,
-       double &totalCutLen);
+   bool ProcessIndependently(EffectContext &context);
+   bool ProcessAll(EffectContext &context);
+   bool FindSilences(EffectContext &context,
+      RegionList &silences, const TrackList *list,
+      const Track *firstTrack, const Track *lastTrack);
+   bool DoRemoval(EffectContext &context,
+      const RegionList &silences, unsigned iGroup, unsigned nGroups, Track *firstTrack, Track *lastTrack,
+      double &totalCutLen);
 
    wxWeakRef<wxWindow> mUIParent{};
 

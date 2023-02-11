@@ -57,21 +57,17 @@ double EffectBase::GetDefaultDuration()
 // the recursive paths into this function via Effect::Delegate are simplified,
 // and we don't have both EffectSettings and EffectSettingsAccessPtr
 // If pAccess is not null, settings should have come from its Get()
-bool EffectBase::DoEffect(EffectSettings &settings, double projectRate,
-    TrackList *list,
-    WaveTrackFactory *factory,
-    NotifyingSelectedRegion &selectedRegion,
-    unsigned flags,
-    wxWindow *pParent,
-    const EffectDialogFactory &dialogFactory,
-    const EffectSettingsAccessPtr &pAccess)
+bool EffectBase::DoEffect(EffectContext &context, EffectSettings &settings,
+   const InstanceFinder &finder,
+   double projectRate,
+   TrackList *list,
+   NotifyingSelectedRegion &selectedRegion,
+   const EffectSettingsAccessPtr &pAccess)
 {
-   auto cleanup0 = valueRestorer(mUIFlags, flags);
    wxASSERT(selectedRegion.duration() >= 0.0);
 
    mOutputTracks.reset();
 
-   mFactory = factory;
    mProjectRate = projectRate;
 
    SetTracks(list);
@@ -83,7 +79,7 @@ bool EffectBase::DoEffect(EffectSettings &settings, double projectRate,
    TransactionScope trans(pProject, "Effect");
 
    // Update track/group counts
-   CountWaveTracks();
+   context.CountWaveTracks(*mTracks);
 
    bool isSelection = false;
 
@@ -114,8 +110,10 @@ bool EffectBase::DoEffect(EffectSettings &settings, double projectRate,
 
    // We don't yet know the effect type for code in the Nyquist Prompt, so
    // assume it requires a track and handle errors when the effect runs.
-   if ((GetType() == EffectTypeGenerate || GetPath() == NYQUIST_PROMPT_ID) && (mNumTracks == 0)) {
-      auto track = mFactory->Create();
+   if ((GetType() == EffectTypeGenerate || GetPath() == NYQUIST_PROMPT_ID) &&
+       (context.numTracks == 0)
+   ) {
+      auto track = context.factory->Create();
       track->SetName(mTracks->MakeUniqueTrackName(WaveTrack::GetDefaultAudioTrackNamePreference()));
       newTrack = mTracks->Add(track);
       newTrack->SetSelected(true);
@@ -159,24 +157,16 @@ bool EffectBase::DoEffect(EffectSettings &settings, double projectRate,
       mPresetNames.push_back(L"control-f1");
 
 #endif
-   CountWaveTracks();
+   context.CountWaveTracks(*mTracks);
 
    // Allow the dialog factory to fill this in, but it might not
    std::shared_ptr<EffectInstance> pInstance;
 
-   // Prompting will be bypassed when applying an effect that has already
-   // been configured, e.g. repeating the last effect on a different selection.
-   // Prompting may call EffectBase::Preview
-   if ( pParent && dialogFactory && pAccess &&
-      IsInteractive()) {
-      if (!ShowHostInterface(
-         *pParent, dialogFactory, pInstance, *pAccess, true ) )
-         return false;
-      else if (!pInstance)
-         return false;
+   if (IsInteractive()) {
+      if (auto result = finder(settings))
+         pInstance = *result;
       else
-         // Retrieve again after the dialog modified settings
-         settings = pAccess->Get();
+         return false;
    }
 
    auto pInstanceEx = std::dynamic_pointer_cast<EffectInstanceEx>(pInstance);
@@ -205,10 +195,10 @@ bool EffectBase::DoEffect(EffectSettings &settings, double projectRate,
          XO("Applying %s...").Format( name ),
          ProgressShowCancel
       );
-      auto vr = valueRestorer( mProgress, progress.get() );
+      auto vr = valueRestorer(context.pProgress, progress.get());
 
       assert(pInstanceEx); // null check above
-      returnVal = pInstanceEx->Process(settings);
+      returnVal = pInstanceEx->Process(context, settings);
    }
 
    if (returnVal && (mT1 >= mT0 ))
@@ -230,11 +220,6 @@ void EffectBase::SetPreviewFullSelectionFlag(bool previewDurationFlag)
    mPreviewFullSelection = previewDurationFlag;
 }
 
-
-void EffectBase::IncludeNotSelectedPreviewTracks(bool includeNotSelected)
-{
-   mPreviewWithNotSelected = includeNotSelected;
-}
 
 // If bGoodResult, replace mTracks tracks with successfully processed mOutputTracks copies.
 // Else clear and DELETE mOutputTracks copies.
@@ -324,17 +309,18 @@ const AudacityProject *EffectBase::FindProject() const
    return inputTracks()->GetOwner();
 }
 
-void EffectBase::CountWaveTracks()
+std::any EffectBase::BeginPreview(const EffectSettings &)
 {
-   mNumTracks = mTracks->Selected< const WaveTrack >().size();
-   mNumGroups = mTracks->SelectedLeaders< const WaveTrack >().size();
+   return {};
 }
 
-void EffectBase::Preview(EffectSettingsAccess &access, bool dryOnly)
+void EffectBase::Preview(EffectContext &context,
+   EffectSettingsAccess &access, std::function<void()> updateUI, bool dryOnly)
 {
-   if (mNumTracks == 0) { // nothing to preview
+   auto cleanup0 = BeginPreview(access.Get());
+
+   if (context.numTracks == 0) // nothing to preview
       return;
-   }
 
    auto gAudioIO = AudioIO::Get();
    if (gAudioIO->IsBusy()) {
@@ -348,17 +334,16 @@ void EffectBase::Preview(EffectSettingsAccess &access, bool dryOnly)
    bool isGenerator = GetType() == EffectTypeGenerate;
 
    // Mix a few seconds of audio from all of the tracks
-   double previewLen;
-   gPrefs->Read(wxT("/AudioIO/EffectsPreviewLen"), &previewLen, 6.0);
+   auto previewLen = EffectPreviewLength.Read();
 
    const double rate = mProjectRate;
 
    const auto &settings = access.Get();
    if (isNyquist && isGenerator)
-      previewDuration = CalcPreviewInputLength(settings, previewLen);
+      previewDuration = CalcPreviewInputLength(context, settings, previewLen);
    else
       previewDuration = std::min(settings.extra.GetDuration(),
-         CalcPreviewInputLength(settings, previewLen));
+         CalcPreviewInputLength(context, settings, previewLen));
 
    double t1 = mT0 + previewDuration;
 
@@ -383,10 +368,6 @@ void EffectBase::Preview(EffectSettingsAccess &access, bool dryOnly)
             std::dynamic_pointer_cast<EffectInstanceEx>(MakeInstance())
          )
             pInstance->Init();
-
-      // In case any dialog control depends on mT1 or mDuration:
-      if ( mUIDialog )
-         mUIDialog->TransferDataToWindow();
    } );
 
    auto vr0 = valueRestorer( mT0 );
@@ -396,9 +377,8 @@ void EffectBase::Preview(EffectSettingsAccess &access, bool dryOnly)
       mT1 = t1;
 
    // In case any dialog control depends on mT1 or mDuration:
-   if ( mUIDialog ) {
-      mUIDialog->TransferDataToWindow();
-   }
+   if (updateUI)
+      updateUI();
 
    // Save the original track list
    TrackList *saveTracks = mTracks;
@@ -426,7 +406,7 @@ void EffectBase::Preview(EffectSettingsAccess &access, bool dryOnly)
       MixAndRender(saveTracks->Selected<const WaveTrack>(),
          Mixer::WarpOptions{ *saveTracks },
          wxString{}, // Don't care about the name of the temporary tracks
-         mFactory, rate, floatSample, mT0, t1, mixLeft, mixRight);
+         context.factory, rate, floatSample, mT0, t1, mixLeft, mixRight);
       if (!mixLeft)
          return;
 
@@ -443,7 +423,7 @@ void EffectBase::Preview(EffectSettingsAccess &access, bool dryOnly)
    }
    else {
       for (auto src : saveTracks->Any< const WaveTrack >()) {
-         if (src->GetSelected() || mPreviewWithNotSelected) {
+         if (src->GetSelected()) {
             auto dest = src->Copy(mT0, t1);
             dest->SetSelected(src->GetSelected());
             mTracks->Add( dest );
@@ -458,7 +438,7 @@ void EffectBase::Preview(EffectSettingsAccess &access, bool dryOnly)
    mT0 = 0.0;
 
    // Update track/group counts
-   CountWaveTracks();
+   context.CountWaveTracks(*mTracks);
 
    // Apply effect
    if (!dryOnly) {
@@ -468,15 +448,15 @@ void EffectBase::Preview(EffectSettingsAccess &access, bool dryOnly)
          XO("Preparing preview"),
          ProgressShowStop
       ); // Have only "Stop" button.
-      auto vr = valueRestorer( mProgress, progress.get() );
+      auto vr = valueRestorer(context.pProgress, progress.get());
 
-      auto vr2 = valueRestorer( mIsPreview, true );
+      auto vr2 = valueRestorer(context.isPreviewing, true);
 
       access.ModifySettings([&](EffectSettings &settings){
          // Preview of non-realtime effect
          auto pInstance =
             std::dynamic_pointer_cast<EffectInstanceEx>(MakeInstance());
-         success = pInstance && pInstance->Process(settings);
+         success = pInstance && pInstance->Process(context, settings);
          return nullptr;
       });
    }
@@ -526,3 +506,5 @@ void EffectBase::Preview(EffectSettingsAccess &access, bool dryOnly)
       }
    }
 }
+
+DoubleSetting EffectPreviewLength{ "/AudioIO/EffectsPreviewLen", 6.0 };

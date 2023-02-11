@@ -23,7 +23,8 @@ class AUDACITY_DLL_API EffectTwoPassSimpleMono /* not final */
 public:
    // Effect implementation
 
-   bool Process(EffectInstance &instance, EffectSettings &settings) override;
+   bool Process(EffectContext &context,
+      EffectInstance &instance, EffectSettings &settings) override;
 
 protected:
    // EffectTwoPassSimpleMono implementation
@@ -80,9 +81,10 @@ protected:
    std::shared_ptr<TrackList> *mTrackLists[2];
 
 private:
-   bool ProcessOne(WaveTrack * t, WaveTrack * outTrack,
-                   sampleCount start, sampleCount end);
-   bool ProcessPass(EffectSettings &settings);
+   bool ProcessOne(EffectContext &context,
+      WaveTrack * t, WaveTrack * outTrack,
+      sampleCount start, sampleCount end);
+   bool ProcessPass(EffectContext &context, EffectSettings &settings);
 };
 
 #endif

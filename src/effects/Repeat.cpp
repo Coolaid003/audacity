@@ -18,11 +18,8 @@
 \brief Dialog used with EffectRepeat
 
 *//*******************************************************************/
-
-
-
 #include "Repeat.h"
-
+#include "EffectEditor.h"
 
 #include <math.h>
 
@@ -91,7 +88,8 @@ EffectType EffectRepeat::GetType() const
 
 // Effect implementation
 
-bool EffectRepeat::Process(EffectInstance &, EffectSettings &)
+bool EffectRepeat::Process(EffectContext &context,
+   EffectInstance &, EffectSettings &)
 {
    // Set up mOutputTracks.
    // This effect needs all for sync-lock grouping.
@@ -133,7 +131,7 @@ bool EffectRepeat::Process(EffectInstance &, EffectSettings &)
          auto t0 = tc;
          for(int j=0; j<repeatCount; j++)
          {
-            if (TrackProgress(nTrack, j / repeatCount)) // TrackProgress returns true on Cancel.
+            if (context.TrackProgress(nTrack, j / repeatCount)) // TrackProgress returns true on Cancel.
             {
                bGoodResult = false;
                return;
@@ -181,7 +179,7 @@ bool EffectRepeat::Process(EffectInstance &, EffectSettings &)
    return bGoodResult;
 }
 
-std::unique_ptr<EffectUIValidator> EffectRepeat::PopulateOrExchange(
+std::unique_ptr<EffectEditor> EffectRepeat::PopulateOrExchange(
    ShuttleGui & S, EffectInstance &, EffectSettingsAccess &,
    const EffectOutputs *)
 {
@@ -247,7 +245,7 @@ void EffectRepeat::DisplayNewTime()
    mCurrentTime->SetName(str); // fix for bug 577 (NVDA/Narrator screen readers do not read static text in dialogs)
 
    if (l > 0) {
-      EffectUIValidator::EnableApply(mUIParent, true);
+      EffectEditor::EnableApply(mUIParent, true);
       repeatCount = l;
 
       nc.SetValue((mT1 - mT0) * (repeatCount + 1));
@@ -255,7 +253,7 @@ void EffectRepeat::DisplayNewTime()
    }
    else {
       str = _("Warning: No repeats.");
-      EffectUIValidator::EnableApply(mUIParent, false);
+      EffectEditor::EnableApply(mUIParent, false);
    }
    mTotalTime->SetLabel(str);
    mTotalTime->SetName(str); // fix for bug 577 (NVDA/Narrator screen readers do not read static text in dialogs)

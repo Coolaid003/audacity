@@ -422,7 +422,7 @@ bool VSTEffectsModule::CheckPluginExist(const PluginPath& path) const
 class VSTEffectOptionsDialog final : public wxDialogWrapper
 {
 public:
-   VSTEffectOptionsDialog(wxWindow * parent, EffectDefinitionInterface &effect);
+   explicit VSTEffectOptionsDialog(const EffectDefinitionInterface &effect);
    virtual ~VSTEffectOptionsDialog();
 
    void PopulateOrExchange(ShuttleGui & S);
@@ -430,7 +430,7 @@ public:
    void OnOk(wxCommandEvent & evt);
 
 private:
-   EffectDefinitionInterface &mEffect;
+   const EffectDefinitionInterface &mEffect;
    int mBufferSize;
    bool mUseLatency;
    bool mUseGUI;
@@ -443,9 +443,9 @@ BEGIN_EVENT_TABLE(VSTEffectOptionsDialog, wxDialogWrapper)
 END_EVENT_TABLE()
 
 VSTEffectOptionsDialog::VSTEffectOptionsDialog(
-   wxWindow * parent, EffectDefinitionInterface &effect)
-:  wxDialogWrapper(parent, wxID_ANY, XO("VST Effect Options"))
-, mEffect{ effect }
+   const EffectDefinitionInterface &effect
+)  : wxDialogWrapper{ nullptr, wxID_ANY, XO("VST Effect Options") }
+   , mEffect{ effect }
 {
    GetConfig(mEffect, PluginSettings::Shared, wxT("Options"),
       wxT("BufferSize"), mBufferSize, 8192);
@@ -565,9 +565,9 @@ void VSTEffectOptionsDialog::OnOk(wxCommandEvent & WXUNUSED(evt))
 class VSTEffectTimer final : public wxTimer
 {
 public:
-   VSTEffectTimer(VSTEffectValidator* pValidator)
+   VSTEffectTimer(VSTEffectEditor* pEditor)
    :  wxTimer(),
-      mpValidator(pValidator)
+      mpEditor(pEditor)
    {
    }
 
@@ -577,11 +577,11 @@ public:
 
    void Notify()
    {
-      mpValidator->OnTimer();
+      mpEditor->OnTimer();
    }
 
 private:
-   VSTEffectValidator* mpValidator;
+   VSTEffectEditor* mpEditor;
 };
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -1049,11 +1049,13 @@ std::shared_ptr<EffectInstance> VSTEffect::DoMakeInstance()
    GetConfig(*this, PluginSettings::Shared, wxT("Options"),
       wxT("BufferSize"), userBlockSize, 8192);
    size_t userBlockSizeC = std::max( 1, userBlockSize );
+   bool useLatency;
    GetConfig(*this, PluginSettings::Shared, wxT("Options"),
-      wxT("UseLatency"), mUseLatency, true);
+      wxT("UseLatency"), useLatency, true);
   
  
-   return std::make_shared<VSTEffectInstance>(*this, mPath, userBlockSizeC, userBlockSizeC, mUseLatency);
+   return std::make_shared<VSTEffectInstance>(
+      *this, mPath, userBlockSizeC, userBlockSizeC, useLatency);
 }
 
 unsigned VSTEffectInstance::GetAudioInCount() const
@@ -1421,17 +1423,18 @@ bool VSTEffectInstance::RealtimeProcessEnd(EffectSettings &) noexcept
 /// provided by the effect, so it will not work with all effects since they don't
 /// all provide the information (kn0ck0ut is one).
 ///
-int VSTEffect::ShowClientInterface(
-   wxWindow &parent, wxDialog &dialog, EffectUIValidator* validator, bool forceModal)
+int VSTEffect::ShowClientInterface(const EffectPlugin &,
+   wxWindow &parent, wxDialog &dialog,
+   EffectEditor* pEditor, bool forceModal) const
 {
    //   mProcessLevel = 1;      // in GUI thread
 
-   VSTEffectValidator* vstValidator = static_cast<VSTEffectValidator*>(validator);
+   VSTEffectEditor* vstEditor = static_cast<VSTEffectEditor*>(pEditor);
 
-   return vstValidator->ShowDialog(/* nonModal = */ SupportsRealtime() && !forceModal);
+   return vstEditor->ShowDialog(/* nonModal = */ SupportsRealtime() && !forceModal);
 }
 
-int VSTEffectValidator::ShowDialog(bool nonModal)
+int VSTEffectEditor::ShowDialog(bool nonModal)
 {
    mDialog->CentreOnParent();
 
@@ -1444,9 +1447,9 @@ int VSTEffectValidator::ShowDialog(bool nonModal)
    return mDialog->ShowModal();
 }
 
-bool VSTEffectValidator::IsGraphicalUI()
+bool VSTEffectEditor::IsGraphicalUI()
 {
-   return mEffect.IsGraphicalUI();
+   return mInstance.HasGUI();
 }
 
 bool VSTEffect::SaveSettings(const EffectSettings& settings, CommandParameters& parms) const
@@ -1546,13 +1549,9 @@ bool VSTEffect::DoLoadFactoryPreset(int id)
    return true;
 }
 
-// ============================================================================
-// EffectUIClientInterface implementation
-// ============================================================================
-
-std::unique_ptr<EffectUIValidator> VSTEffect::PopulateUI(ShuttleGui &S,
-   EffectInstance& instance, EffectSettingsAccess &access,
-   const EffectOutputs *)
+std::unique_ptr<EffectEditor> VSTEffect::PopulateUI(const EffectPlugin &,
+   ShuttleGui &S, EffectInstance& instance, EffectSettingsAccess &access,
+   const EffectOutputs *) const
 {
    auto parent = S.GetParent();
 
@@ -1561,19 +1560,12 @@ std::unique_ptr<EffectUIValidator> VSTEffect::PopulateUI(ShuttleGui &S,
                           wxT("UseGUI"),
                           mGui,
                           true);
-   mGui = mAEffect->flags & effFlagsHasEditor ? mGui : false;
-
-   // Must use the GUI editor if parameters aren't provided
-   if (mAEffect->numParams == 0)
-   {
-      mGui = true;
-   }
 
    auto pParent = S.GetParent();
 
    auto& vst2Instance = dynamic_cast<VSTEffectInstance&>(instance);
 
-   auto validator = std::make_unique<VSTEffectValidator>(
+   auto validator = std::make_unique<VSTEffectEditor>(
       vst2Instance, *this, access, pParent, mAEffect->numParams);
 
    // Also let the instance know about the validator, so it can forward
@@ -1595,25 +1587,23 @@ std::unique_ptr<EffectUIValidator> VSTEffect::PopulateUI(ShuttleGui &S,
    return validator;
 }
 
-bool VSTEffect::IsGraphicalUI()
+std::unique_ptr<EffectEditor> VSTEffect::MakeEditor(
+   ShuttleGui &, EffectInstance &, EffectSettingsAccess &,
+   const EffectOutputs *) const
 {
-   return mGui;
+   //! Will not come here because Effect::PopulateUI is overridden
+   assert(false);
+   return nullptr;
 }
 
-
-
-bool VSTEffect::CloseUI()
-{
-   return true;
-}
-
-bool VSTEffect::CanExportPresets()
+bool VSTEffect::CanExportPresets() const
 {
    return true;
 }
 
 // Throws exceptions rather than reporting errors.
-void VSTEffect::ExportPresets(const EffectSettings& settings) const
+void VSTEffect::ExportPresets(
+   const EffectPlugin &, const EffectSettings& settings) const
 {
    wxString path;
 
@@ -1676,7 +1666,16 @@ void VSTEffect::ExportPresets(const EffectSettings& settings) const
 //
 // Based on work by Sven Giermann
 //
-OptionalMessage VSTEffect::ImportPresets(EffectSettings& settings)
+OptionalMessage VSTEffect::ImportPresets(const EffectPlugin&,
+   EffectSettings& settings) const
+{
+   auto temp = std::make_unique<VSTEffect>(this->mPath);
+   if (!temp->InitializePlugin())
+      return {};
+   return temp->ImportPresetsNC(settings);
+}
+
+OptionalMessage VSTEffect::ImportPresetsNC(EffectSettings& settings)
 {
    wxString path;
 
@@ -1745,21 +1744,14 @@ OptionalMessage VSTEffect::ImportPresets(EffectSettings& settings)
       VSTEffectInstance::GetSettings(settings));
 }
 
-bool VSTEffect::HasOptions()
+bool VSTEffect::HasOptions() const
 {
    return true;
 }
 
-void VSTEffect::ShowOptions()
+void VSTEffect::ShowOptions(const EffectPlugin &) const
 {
-   VSTEffectOptionsDialog dlg(nullptr, *this);
-   if (dlg.ShowModal())
-   {
-      // Reinitialize configuration settings
-      
-      GetConfig(*this, PluginSettings::Shared, wxT("Options"),
-         wxT("UseLatency"), mUseLatency, true);
-   }
+   VSTEffectOptionsDialog{ *this }.ShowModal();
 }
 
 // ============================================================================
@@ -1929,6 +1921,14 @@ bool VSTEffectWrapper::Load()
    // Was it successful?
    if (mAEffect)
    {
+      mGui = mAEffect->flags & effFlagsHasEditor ? mGui : false;
+
+      // Must use the GUI editor if parameters aren't provided
+      if (mAEffect->numParams == 0)
+      {
+         mGui = true;
+      }
+
       // Save a reference to ourselves
       //
       // Note:  Some hosts use "user" and some use "ptr2/resvd2".  It might
@@ -2197,12 +2197,12 @@ bool VSTEffect::SaveUserPreset(
 void VSTEffectUIWrapper::Flush()
 {}
 
-void VSTEffectValidator::Flush()
+void VSTEffectEditor::Flush()
 {
    mAccess.Flush();
 }
 
-void VSTEffectValidator::OnTimer()
+void VSTEffectEditor::OnTimer()
 {
    wxRecursionGuard guard(mTimerGuard);
 
@@ -2239,13 +2239,13 @@ void VSTEffectInstance::NeedIdle()
    }
 }
 
-void VSTEffectValidator::NeedIdle()
+void VSTEffectEditor::NeedIdle()
 {
    mWantsIdle = true;
    mTimer->Start(100);
 }
 
-void VSTEffectValidator::NeedEditIdle(bool state)
+void VSTEffectEditor::NeedEditIdle(bool state)
 {
    mWantsEditIdle = state;
    mTimer->Start(100);
@@ -2317,7 +2317,7 @@ void VSTEffectInstance::SizeWindow(int w, int h)
    }
 }
 
-void VSTEffectValidator::NotifyParameterChanged(int index, float value)
+void VSTEffectEditor::NotifyParameterChanged(int index, float value)
 {
    const auto& settings = VSTEffectWrapper::GetSettings(mAccess.Get());
 
@@ -2341,7 +2341,7 @@ void VSTEffectValidator::NotifyParameterChanged(int index, float value)
       });
 }
 
-void VSTEffectValidator::OnIdle(wxIdleEvent& evt)
+void VSTEffectEditor::OnIdle(wxIdleEvent& evt)
 {
    evt.Skip();
    if (!mLastMovements.empty()) {
@@ -2374,7 +2374,7 @@ void VSTEffectValidator::OnIdle(wxIdleEvent& evt)
 
 }
 
-void VSTEffectValidator::SizeWindow(int w, int h)
+void VSTEffectEditor::SizeWindow(int w, int h)
 {
    // Queue the event to make the resizes smoother
    if (mParent)
@@ -2402,7 +2402,12 @@ void VSTEffect::UpdateDisplay()
 }
 
 
-void VSTEffectWrapper::SetBufferDelay(int samples)
+void VSTEffectWrapper::SetBufferDelay(int)
+{
+}
+
+
+void VSTEffectInstance::SetBufferDelay(int samples)
 {
    // We do not support negative delay
    if (samples >= 0 && mUseLatency)
@@ -2552,7 +2557,7 @@ static void OnSize(wxSizeEvent & evt)
    }
 }
 
-void VSTEffectValidator::BuildFancy(EffectInstance& instance)
+void VSTEffectEditor::BuildFancy(EffectInstance& instance)
 {
    auto& vstEffInstance = dynamic_cast<VSTEffectInstance&>(instance);
 
@@ -2584,7 +2589,7 @@ void VSTEffectValidator::BuildFancy(EffectInstance& instance)
    mDialog->Bind(wxEVT_SIZE, OnSize);
    
    
-   BindTo(*mDialog, EVT_SIZEWINDOW, &VSTEffectValidator::OnSizeWindow);
+   BindTo(*mDialog, EVT_SIZEWINDOW, &VSTEffectEditor::OnSizeWindow);
 
 #ifdef __WXMAC__
 #ifdef __WX_EVTLOOP_BUSY_WAITING__
@@ -2595,7 +2600,7 @@ void VSTEffectValidator::BuildFancy(EffectInstance& instance)
    return;
 }
 
-void VSTEffectValidator::BuildPlain(EffectSettingsAccess &access, EffectType effectType, double projectRate)
+void VSTEffectEditor::BuildPlain(EffectSettingsAccess &access, EffectType effectType, double projectRate)
 {
    wxASSERT(mParent); // To justify safenew
    wxScrolledWindow *const scroller = safenew wxScrolledWindow(mParent,
@@ -2698,7 +2703,7 @@ void VSTEffectValidator::BuildPlain(EffectSettingsAccess &access, EffectType eff
 #endif
 
             // Bind the slider to ::OnSlider
-            BindTo(*mSliders[i], wxEVT_COMMAND_SLIDER_UPDATED, &VSTEffectValidator::OnSlider);
+            BindTo(*mSliders[i], wxEVT_COMMAND_SLIDER_UPDATED, &VSTEffectEditor::OnSlider);
 
             mDisplays[i] = safenew wxStaticText(scroller,
                wxID_ANY,
@@ -2727,7 +2732,7 @@ void VSTEffectValidator::BuildPlain(EffectSettingsAccess &access, EffectType eff
    mSliders[0]->SetFocus();
 }
 
-void VSTEffectValidator::RefreshParameters(int skip) const
+void VSTEffectEditor::RefreshParameters(int skip) const
 {
    if (!mNames)
    {
@@ -2778,7 +2783,7 @@ void VSTEffectValidator::RefreshParameters(int skip) const
    }
 }
 
-void VSTEffectValidator::OnSizeWindow(wxCommandEvent & evt)
+void VSTEffectEditor::OnSizeWindow(wxCommandEvent & evt)
 {
    if (!mControl)
    {
@@ -2800,7 +2805,7 @@ void VSTEffectValidator::OnSizeWindow(wxCommandEvent & evt)
    mDialog->Fit();
 }
 
-void VSTEffectValidator::OnSlider(wxCommandEvent & evt)
+void VSTEffectEditor::OnSlider(wxCommandEvent & evt)
 {
    wxSlider *s = (wxSlider *) evt.GetEventObject();
    int i = s->GetId() - ID_Sliders;
@@ -3870,7 +3875,7 @@ bool VSTEffectWrapper::StoreSettings(const VSTEffectSettings& vstSettings) const
    return true;
 }
 
-bool VSTEffectValidator::UpdateUI()
+bool VSTEffectEditor::UpdateUI()
 {
    // Update the controls on the plain UI
    RefreshParameters();
@@ -3890,7 +3895,7 @@ EffectSettings VSTEffect::MakeSettings() const
    return EffectSettings::Make<VSTEffectSettings>(std::move(settings));
 }
 
-VSTEffectValidator::~VSTEffectValidator()
+VSTEffectEditor::~VSTEffectEditor()
 {
    // Just for extra safety
    GetInstance().SetOwningValidator(nullptr);
@@ -3920,19 +3925,17 @@ VSTEffectWrapper::MakeMessageFS(const VSTEffectSettings &settings) const
       settings.mChunk /* vector copy */, std::move(paramVector));
 }
 
-VSTEffectValidator::VSTEffectValidator
-(
+VSTEffectEditor::VSTEffectEditor(
    VSTEffectInstance&       instance,
-   EffectUIClientInterface& effect,
+   const EffectUIServices&  services,
    EffectSettingsAccess&    access,
    wxWindow*                pParent,
    int                      numParams
-)
-   : EffectUIValidator(effect, access),
-     mInstance(instance),
-     mParent(pParent),
-     mDialog( static_cast<wxDialog*>(wxGetTopLevelParent(pParent)) ),
-     mNumParams(numParams)
+)  : EffectEditor(services, access)
+   , mInstance(instance)
+   , mParent(pParent)
+   , mDialog( static_cast<wxDialog*>(wxGetTopLevelParent(pParent)) )
+   , mNumParams(numParams)
 {
    // In case of nondestructive processing, put an initial message in the
    // queue for the instance
@@ -3951,11 +3954,11 @@ VSTEffectValidator::VSTEffectValidator
 
    mTimer = std::make_unique<VSTEffectTimer>(this);
 
-   wxTheApp->Bind(wxEVT_IDLE, &VSTEffectValidator::OnIdle, this);
+   wxTheApp->Bind(wxEVT_IDLE, &VSTEffectEditor::OnIdle, this);
 }
 
 
-VSTEffectInstance& VSTEffectValidator::GetInstance() const
+VSTEffectInstance& VSTEffectEditor::GetInstance() const
 {
    return mInstance;
 }
@@ -3983,7 +3986,7 @@ void VSTEffectInstance::Automate(int index, float value)
 }
 
 
-void VSTEffectValidator::Automate(int index, float value)
+void VSTEffectEditor::Automate(int index, float value)
 {
    NotifyParameterChanged(index, value);
    // Send changed settings (only) to the worker thread
@@ -4004,6 +4007,7 @@ VSTEffectInstance::VSTEffectInstance
 
    : PerTrackEffect::Instance(effect)
    , VSTEffectWrapper(path)
+   , mUseLatency{ useLatency }
 {
    // what also happens in the effect ctor
    //
@@ -4018,7 +4022,6 @@ VSTEffectInstance::VSTEffectInstance
 
    mBlockSize = blockSize;
    mUserBlockSize = userBlockSize;
-   mUseLatency = useLatency;
 
    Load();
 
@@ -4046,27 +4049,28 @@ void VSTEffectInstance::SetOwningValidator(VSTEffectUIWrapper* vi)
 }
 
 
-bool VSTEffectValidator::FetchSettingsFromInstance(EffectSettings& settings)
+bool VSTEffectEditor::FetchSettingsFromInstance(EffectSettings& settings)
 {
    return mInstance.FetchSettings(
       // Change this when GetSettings becomes a static function
-      static_cast<const VSTEffect&>(mEffect).GetSettings(settings));
+      static_cast<const VSTEffect&>(mServices).GetSettings(settings));
 }
 
 
-bool VSTEffectValidator::StoreSettingsToInstance(const EffectSettings& settings)
+bool VSTEffectEditor::StoreSettingsToInstance(const EffectSettings& settings)
 {
    return mInstance.StoreSettings(
       // Change this when GetSettings becomes a static function
-      static_cast<const VSTEffect&>(mEffect).GetSettings(settings));
+      static_cast<const VSTEffect&>(mServices).GetSettings(settings));
 }
 
 
-bool VSTEffectValidator::ValidateUI()
+bool VSTEffectEditor::ValidateUI()
 {
    mAccess.ModifySettings([this](EffectSettings& settings)
    {
-      const auto& eff = static_cast<VSTEffect&>(VSTEffectValidator::mEffect);
+      const auto& eff =
+         static_cast<const VSTEffect&>(VSTEffectEditor::mServices);
       if (eff.GetType() == EffectTypeGenerate)
          settings.extra.SetDuration(mDuration->GetValue());
 
@@ -4079,7 +4083,7 @@ bool VSTEffectValidator::ValidateUI()
 }
 
 
-void VSTEffectValidator::OnClose()
+void VSTEffectEditor::OnClose()
 {
 
 #ifdef __WXMAC__

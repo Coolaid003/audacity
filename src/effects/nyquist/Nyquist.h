@@ -11,7 +11,7 @@
 #ifndef __AUDACITY_EFFECT_NYQUIST__
 #define __AUDACITY_EFFECT_NYQUIST__
 
-#include "../Effect.h"
+#include "../StatefulEffect.h"
 #include "FileNames.h"
 #include "SampleCount.h"
 #include "../../widgets/wxPanelWrapper.h"
@@ -119,12 +119,13 @@ public:
    // Effect implementation
 
    bool Init() override;
-   bool Process(EffectInstance &instance, EffectSettings &settings) override;
-   int ShowHostInterface( wxWindow &parent,
-      const EffectDialogFactory &factory,
+   bool Process(EffectContext &context,
+      EffectInstance &instance, EffectSettings &settings) override;
+   int ShowHostInterface(const std::shared_ptr<EffectContext> &pContext,
+      EffectPlugin &plugin, wxWindow &parent, const EffectDialogFactory &factory,
       std::shared_ptr<EffectInstance> &pInstance, EffectSettingsAccess &access,
       bool forceModal = false) override;
-   std::unique_ptr<EffectUIValidator> PopulateOrExchange(
+   std::unique_ptr<EffectEditor> PopulateOrExchange(
       ShuttleGui & S, EffectInstance &instance,
       EffectSettingsAccess &access, const EffectOutputs *pOutputs) override;
    bool TransferDataToWindow(const EffectSettings &settings) override;
@@ -144,7 +145,7 @@ private:
    static int mReentryCount;
    // NyquistEffect implementation
 
-   bool ProcessOne();
+   bool ProcessOne(EffectContext &context);
 
    void BuildPromptWindow(ShuttleGui & S);
    void BuildEffectWindow(ShuttleGui & S);
@@ -177,9 +178,9 @@ private:
    static void StaticOutputCallback(int c, void *userdata);
    static void StaticOSCallback(void *userdata);
 
-   int GetCallback(float *buffer, int channel,
+   int GetCallback(EffectContext &context, float *buffer, int channel,
                    int64_t start, int64_t len, int64_t totlen);
-   int PutCallback(float *buffer, int channel,
+   int PutCallback(EffectContext &context, float *buffer, int channel,
                    int64_t start, int64_t len, int64_t totlen);
    void OutputCallback(int c);
    void OSCallback();

@@ -20,7 +20,6 @@ effects.
 
 
 #include "EffectManager.h"
-
 #include "Effect.h"
 
 #include <algorithm>
@@ -48,7 +47,6 @@ EffectManager & EffectManager::Get()
 
 EffectManager::EffectManager()
 {
-   mSkipStateFlag = false;
 }
 
 EffectManager::~EffectManager()
@@ -82,7 +80,6 @@ bool EffectManager::DoAudacityCommand(const PluginID & ID,
                              bool shouldPrompt /* = true */)
 
 {
-   this->SetSkipStateFlag(false);
    AudacityCommand *command = GetAudacityCommand(ID);
    
    if (!command)
@@ -224,16 +221,6 @@ bool EffectManager::IsHidden(const PluginID & ID)
    return false;
 }
 
-void EffectManager::SetSkipStateFlag(bool flag)
-{
-   mSkipStateFlag = flag;
-}
-
-bool EffectManager::GetSkipStateFlag()
-{
-   return mSkipStateFlag;
-}
-
 bool EffectManager::SupportsAutomation(const PluginID & ID)
 {
    const PluginDescriptor *plug =  PluginManager::Get().GetPlugin(ID);
@@ -331,8 +318,10 @@ bool EffectManager::SetEffectParameters(
 bool EffectManager::PromptUser(
    const PluginID & ID, const EffectDialogFactory &factory, wxWindow &parent)
 {
+   // EffectContext construction
+   auto pContext = std::make_shared<EffectContext>();
    bool result = false;
-   if (auto effect = GetEffect(ID)) {
+   if (auto effect = dynamic_cast<Effect*>(GetEffect(ID))) {
 
       auto empty = TrackList::Create(nullptr);
       auto pEffectBase = dynamic_cast<EffectBase*>(effect);
@@ -348,12 +337,13 @@ bool EffectManager::PromptUser(
       std::shared_ptr<EffectInstance> pInstance;
       //! Show the effect dialog, only so that the user can choose settings,
       //! for instance to define a macro.
-      if (const auto pSettings = GetDefaultSettings(ID))
-         result = effect->ShowHostInterface(
-            parent, factory,
-            pInstance,
+      if (const auto pSettings = GetDefaultSettings(ID)) {
+         const auto pServices = dynamic_cast<EffectUIServices *>(effect);
+         result = pServices && pServices->ShowHostInterface(pContext, *effect,
+            parent, factory, pInstance,
             *std::make_shared<SimpleEffectSettingsAccess>(*pSettings),
             effect->IsBatchProcessing() ) != 0;
+      }
       return result;
    }
 
@@ -854,12 +844,6 @@ EffectAndDefaultSettings &EffectManager::DoGetEffect(const PluginID & ID)
 
       if (auto effect = dynamic_cast<EffectPlugin *>(component))
          return (mEffects[ID] = { effect, std::move(settings) });
-      else if (auto client = dynamic_cast<EffectUIClientInterface *>(component)) {
-         // Nothing inherits EffectUIClientInterface now that does not also
-         // inherit EffectPlugin
-         wxASSERT(false);
-         return empty;
-      }
       else {
          if ( !dynamic_cast<AudacityCommand *>(component) )
             AudacityMessageBox(

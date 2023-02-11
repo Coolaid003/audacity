@@ -44,7 +44,7 @@
 
 #include "ConfigInterface.h"
 #include "VST3Instance.h"
-#include "VST3UIValidator.h"
+#include "VST3Editor.h"
 
 namespace {
 
@@ -235,11 +235,12 @@ OptionalMessage VST3Effect::LoadFactoryPreset(int id, EffectSettings& settings) 
    return { nullptr };
 }
 
-int VST3Effect::ShowClientInterface(wxWindow& parent, wxDialog& dialog,
-   EffectUIValidator *validator, bool forceModal)
+int VST3Effect::ShowClientInterface(const EffectPlugin &,
+   wxWindow& parent, wxDialog& dialog,
+   EffectEditor *pEditor, bool forceModal) const
 {
 #ifdef __WXMSW__
-   if(validator->IsGraphicalUI())
+   if(pEditor->IsGraphicalUI())
       //Not all platforms support window style change.
       //Plugins that support resizing provide their own handles,
       //which may overlap with system handle. Not all plugins
@@ -259,9 +260,9 @@ std::shared_ptr<EffectInstance> VST3Effect::MakeInstance() const
    return std::make_shared<VST3Instance>(*this, *mModule, mEffectClassInfo.ID());
 }
 
-std::unique_ptr<EffectUIValidator> VST3Effect::PopulateUI(ShuttleGui& S,
-   EffectInstance& instance, EffectSettingsAccess &access,
-   const EffectOutputs *)
+std::unique_ptr<EffectEditor> VST3Effect::PopulateUI(const EffectPlugin &,
+   ShuttleGui& S, EffectInstance& instance, EffectSettingsAccess &access,
+   const EffectOutputs *) const
 {
    bool useGUI { true };
    GetConfig(*this, PluginSettings::Shared, wxT("Options"),
@@ -270,23 +271,27 @@ std::unique_ptr<EffectUIValidator> VST3Effect::PopulateUI(ShuttleGui& S,
             useGUI);
 
    const auto vst3instance = dynamic_cast<VST3Instance*>(&instance);
-   mParent = S.GetParent();
 
-   return std::make_unique<VST3UIValidator>(mParent, vst3instance->GetWrapper(), *this, access, useGUI);
+   return std::make_unique<VST3Editor>(S.GetParent(),
+      vst3instance->GetWrapper(), *this, access, useGUI);
 }
 
-bool VST3Effect::CloseUI()
+std::unique_ptr<EffectEditor> VST3Effect::MakeEditor(
+   ShuttleGui &, EffectInstance &, EffectSettingsAccess &,
+   const EffectOutputs *) const
 {
-   mParent = nullptr;
+   //! Will not come here because Effect::PopulateUI is overridden
+   assert(false);
+   return nullptr;
+}
+
+bool VST3Effect::CanExportPresets() const
+{
    return true;
 }
 
-bool VST3Effect::CanExportPresets()
-{
-   return true;
-}
-
-void VST3Effect::ExportPresets(const EffectSettings& settings) const
+void VST3Effect::ExportPresets(
+   const EffectPlugin &, const EffectSettings& settings) const
 {
    using namespace Steinberg;
 
@@ -304,8 +309,6 @@ void VST3Effect::ExportPresets(const EffectSettings& settings) const
    if (path.empty())
       return;
 
-   auto dialogPlacement = wxWidgetsWindowPlacement { mParent };
-
    auto fileStream = owned(Vst::FileStream::open(path.c_str(), "wb"));
    if(!fileStream)
    {
@@ -314,7 +317,6 @@ void VST3Effect::ExportPresets(const EffectSettings& settings) const
          XO("Cannot open file"),
          BasicUI::MessageBoxOptions()
             .Caption(XO("Error"))
-            .Parent(&dialogPlacement)
       );
       return;
    }
@@ -329,12 +331,12 @@ void VST3Effect::ExportPresets(const EffectSettings& settings) const
          XO("Failed to save VST3 preset to file"),
          BasicUI::MessageBoxOptions()
             .Caption(XO("Error"))
-            .Parent(&dialogPlacement)
       );
    }
 }
 
-OptionalMessage VST3Effect::ImportPresets(EffectSettings& settings)
+OptionalMessage VST3Effect::ImportPresets(
+   const EffectPlugin &, EffectSettings& settings) const
 {
    using namespace Steinberg;
 
@@ -358,22 +360,19 @@ OptionalMessage VST3Effect::ImportPresets(EffectSettings& settings)
    return { nullptr };
 }
 
-bool VST3Effect::HasOptions()
+bool VST3Effect::HasOptions() const
 {
    return true;
 }
 
-void VST3Effect::ShowOptions()
+void VST3Effect::ShowOptions(const EffectPlugin &) const
 {
-   VST3OptionsDialog dlg(mParent, *this);
-   dlg.ShowModal();
+   VST3OptionsDialog{ *this }.ShowModal();
 }
 
 bool VST3Effect::LoadPreset(const wxString& path, EffectSettings& settings) const
 {
    using namespace Steinberg;
-
-   auto dialogPlacement = wxWidgetsWindowPlacement { mParent };
 
    auto fileStream = owned(Vst::FileStream::open(path.c_str(), "rb"));
    if(!fileStream)
@@ -382,7 +381,6 @@ bool VST3Effect::LoadPreset(const wxString& path, EffectSettings& settings) cons
          XO("Cannot open VST3 preset file %s").Format(path),
          BasicUI::MessageBoxOptions()
             .Caption(XO("Error"))
-            .Parent(&dialogPlacement)
       );
       return false;
    }
@@ -395,7 +393,6 @@ bool VST3Effect::LoadPreset(const wxString& path, EffectSettings& settings) cons
          XO("Unable to apply VST3 preset file %s").Format(path),
          BasicUI::MessageBoxOptions()
             .Caption(XO("Error"))
-            .Parent(&dialogPlacement)
       );
       return false;
    }

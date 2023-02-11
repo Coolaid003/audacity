@@ -46,7 +46,6 @@
 #include "../ShuttleGui.h"
 #include "../widgets/HelpSystem.h"
 #include "FFT.h"
-#include "Prefs.h"
 #include "RealFFTf.h"
 #include "../SpectrumTransformer.h"
 
@@ -209,7 +208,8 @@ public:
    Settings();
    ~Settings() {}
 
-   int PromptUser(EffectNoiseReduction *effect, EffectSettingsAccess &access,
+   int PromptUser(const std::shared_ptr<EffectContext> &pContext,
+      EffectNoiseReduction *effect, EffectSettingsAccess &access,
       wxWindow &parent, bool bHasProfile, bool bAllowTwiddleSettings);
    bool PrefsIO(bool read);
    bool Validate(EffectNoiseReduction *effect) const;
@@ -281,13 +281,14 @@ public:
       FloatVector mGains;
    };
 
-   bool Process(TrackList &tracks, double mT0, double mT1);
+   bool Process(
+      EffectContext &context, TrackList &tracks, double mT0, double mT1);
 
 protected:
    MyWindow &NthWindow(int nn) { return static_cast<MyWindow&>(Nth(nn)); }
    std::unique_ptr<Window> NewWindow(size_t windowSize) override;
    bool DoStart() override;
-   static bool Processor(SpectrumTransformer &transformer);
+   static auto Processor(EffectContext &context) -> WindowProcessor;
    bool DoFinish() override;
 
 private:
@@ -344,10 +345,11 @@ class EffectNoiseReduction::Dialog final : public EffectDialog
 {
 public:
    // constructors and destructors
-   Dialog(EffectNoiseReduction *effect, EffectSettingsAccess &access,
-       Settings *settings,
-       wxWindow *parent, bool bHasProfile,
-       bool bAllowTwiddleSettings);
+   Dialog(const std::shared_ptr<EffectContext> &pContext,
+      EffectNoiseReduction *effect, EffectSettingsAccess &access,
+      Settings *settings,
+      wxWindow *parent, bool bHasProfile,
+      bool bAllowTwiddleSettings);
 
    void PopulateOrExchange(ShuttleGui & S) override;
    bool TransferDataToWindow() override;
@@ -379,6 +381,7 @@ private:
 
    // data members
 
+   const std::shared_ptr<EffectContext> mpContext;
    EffectNoiseReduction *m_pEffect;
    //! This dialog is modal, so mAccess will live long enough for it
    EffectSettingsAccess &mAccess;
@@ -441,7 +444,8 @@ EffectType EffectNoiseReduction::GetType() const
  then apply noise reduction to another selection.  That is difficult to fit into
  the framework for managing settings of other effects. */
 int EffectNoiseReduction::ShowHostInterface(
-   wxWindow &parent, const EffectDialogFactory &,
+   const std::shared_ptr<EffectContext> &pContext,
+   EffectPlugin &, wxWindow &parent, const EffectDialogFactory &,
    std::shared_ptr<EffectInstance> &pInstance, EffectSettingsAccess &access,
    bool forceModal)
 {
@@ -454,15 +458,19 @@ int EffectNoiseReduction::ShowHostInterface(
 
    // We may want to twiddle the levels if we are setting
    // from a macro editing dialog
-   return mSettings->PromptUser(this, access, parent,
+   return mSettings->PromptUser(pContext, this, access, parent,
       bool(mStatistics), IsBatchProcessing());
 }
 
-int EffectNoiseReduction::Settings::PromptUser(EffectNoiseReduction *effect,
+int EffectNoiseReduction::Settings::PromptUser(
+   const std::shared_ptr<EffectContext> &pContext,
+   EffectNoiseReduction *effect,
    EffectSettingsAccess &access, wxWindow &parent,
    bool bHasProfile, bool bAllowTwiddleSettings)
 {
-   EffectNoiseReduction::Dialog dlog(effect, access,
+   // Dialog shows modally, so shared pointer to context isn't needed to
+   // avoid a dangling pointer, but we use one anyway
+   EffectNoiseReduction::Dialog dlog(pContext, effect, access,
       this, &parent, bHasProfile, bAllowTwiddleSettings);
 
    dlog.CentreOnParent();
@@ -615,7 +623,8 @@ EffectNoiseReduction::Worker::MyWindow::~MyWindow()
 {
 }
 
-bool EffectNoiseReduction::Process(EffectInstance &, EffectSettings &)
+bool EffectNoiseReduction::Process(EffectContext &context,
+   EffectInstance &, EffectSettings &)
 {
    // This same code will either reduce noise or profile it
 
@@ -679,7 +688,7 @@ bool EffectNoiseReduction::Process(EffectInstance &, EffectSettings &)
       , mF0, mF1
 #endif
    };
-   bool bGoodResult = worker.Process(*mOutputTracks, mT0, mT1);
+   bool bGoodResult = worker.Process(context, *mOutputTracks, mT0, mT1);
    if (mSettings->mDoProfile) {
       if (bGoodResult)
          mSettings->mDoProfile = false; // So that "repeat last effect" will reduce noise
@@ -694,7 +703,7 @@ EffectNoiseReduction::Worker::~Worker()
 {
 }
 
-bool EffectNoiseReduction::Worker::Process(
+bool EffectNoiseReduction::Worker::Process(EffectContext &context,
    TrackList &tracks, double inT0, double inT1)
 {
    mProgressTrackCount = 0;
@@ -731,7 +740,7 @@ bool EffectNoiseReduction::Worker::Process(
             mLen += extra;
 
          if (!TrackSpectrumTransformer::Process(
-            Processor, track, mHistoryLen, start, len ))
+            Processor(context), track, mHistoryLen, start, len ))
             return false;
       }
       ++mProgressTrackCount;
@@ -863,7 +872,10 @@ bool EffectNoiseReduction::Worker::DoStart()
    return TrackSpectrumTransformer::DoStart();
 }
 
-bool EffectNoiseReduction::Worker::Processor(SpectrumTransformer &transformer)
+auto EffectNoiseReduction::Worker::Processor(EffectContext &context)
+   -> WindowProcessor
+{
+   return [&context](SpectrumTransformer &transformer)
 {
    auto &worker = static_cast<Worker &>(transformer);
    // Compute power spectrum in the newest window
@@ -887,10 +899,12 @@ bool EffectNoiseReduction::Worker::Processor(SpectrumTransformer &transformer)
       worker.ReduceNoise();
 
    // Update the Progress meter, let user cancel
-   return !worker.mEffect.TrackProgress(worker.mProgressTrackCount,
+   return !context.TrackProgress(
+      worker.mProgressTrackCount,
       std::min(1.0,
          ((++worker.mProgressWindowCount).as_double() * worker.mStepSize)
             / worker.mLen.as_double()));
+};
 }
 
 void EffectNoiseReduction::Worker::FinishTrackStatistics()
@@ -1346,11 +1360,14 @@ BEGIN_EVENT_TABLE(EffectNoiseReduction::Dialog, wxDialogWrapper)
 #endif
 END_EVENT_TABLE()
 
-EffectNoiseReduction::Dialog::Dialog(EffectNoiseReduction *effect,
-    EffectSettingsAccess &access,
-    EffectNoiseReduction::Settings *settings,
-    wxWindow *parent, bool bHasProfile, bool bAllowTwiddleSettings)
-   : EffectDialog( parent, XO("Noise Reduction"), EffectTypeProcess,wxDEFAULT_DIALOG_STYLE, eHelpButton )
+EffectNoiseReduction::Dialog::Dialog(
+   const std::shared_ptr<EffectContext> &pContext,
+   EffectNoiseReduction *effect,
+   EffectSettingsAccess &access,
+   EffectNoiseReduction::Settings *settings,
+   wxWindow *parent, bool bHasProfile, bool bAllowTwiddleSettings
+)  : EffectDialog( parent, XO("Noise Reduction"), EffectTypeProcess,wxDEFAULT_DIALOG_STYLE, eHelpButton )
+   , mpContext{ pContext }
    , m_pEffect(effect)
    , mAccess{access}
    , m_pSettings(settings) // point to
@@ -1437,8 +1454,8 @@ void EffectNoiseReduction::Dialog::EnableDisableSensitivityControls()
 
 void EffectNoiseReduction::Dialog::OnGetProfile(wxCommandEvent & WXUNUSED(event))
 {
-   // Project has not be changed so skip pushing state
-   EffectManager::Get().SetSkipStateFlag(true);
+   // Project has not been changed so skip pushing state
+   mpContext->skipState = true;
 
    if (!TransferDataFromWindow())
       return;
@@ -1480,7 +1497,10 @@ void EffectNoiseReduction::Dialog::OnPreview(wxCommandEvent & WXUNUSED(event))
    *m_pSettings = mTempSettings;
    m_pSettings->mDoProfile = false;
 
-   m_pEffect->Preview(mAccess, false);
+   m_pEffect->Preview(*mpContext, mAccess,
+      // Don't need any UI updates for preview
+      {},
+      false);
 }
 
 void EffectNoiseReduction::Dialog::OnReduceNoise( wxCommandEvent & WXUNUSED(event))

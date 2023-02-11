@@ -23,9 +23,8 @@
   and/or distribute it under the same terms as Audacity itself.
 
 *//*******************************************************************/
-
-
 #include "ClickRemoval.h"
+#include "EffectEditor.h"
 #include "LoadEffects.h"
 
 #include <math.h>
@@ -33,7 +32,6 @@
 #include <wx/slider.h>
 #include <wx/valgen.h>
 
-#include "Prefs.h"
 #include "../ShuttleGui.h"
 #include "../widgets/AudacityMessageBox.h"
 #include "../widgets/valnum.h"
@@ -111,7 +109,8 @@ bool EffectClickRemoval::CheckWhetherSkipEffect(const EffectSettings &) const
    return ((mClickWidth == 0) || (mThresholdLevel == 0));
 }
 
-bool EffectClickRemoval::Process(EffectInstance &, EffectSettings &)
+bool EffectClickRemoval::Process(EffectContext &context,
+   EffectInstance &, EffectSettings &)
 {
    this->CopyInputTracks(); // Set up mOutputTracks.
    bool bGoodResult = true;
@@ -129,7 +128,7 @@ bool EffectClickRemoval::Process(EffectInstance &, EffectSettings &)
          auto end = track->TimeToLongSamples(t1);
          auto len = end - start;
 
-         if (!ProcessOne(count, track, start, len))
+         if (!ProcessOne(context, count, track, start, len))
          {
             bGoodResult = false;
             break;
@@ -147,7 +146,8 @@ bool EffectClickRemoval::Process(EffectInstance &, EffectSettings &)
    return bGoodResult && mbDidSomething;
 }
 
-bool EffectClickRemoval::ProcessOne(int count, WaveTrack * track, sampleCount start, sampleCount len)
+bool EffectClickRemoval::ProcessOne(EffectContext &context,
+   int count, WaveTrack * track, sampleCount start, sampleCount len)
 {
    if (len <= windowSize / 2)
    {
@@ -192,8 +192,8 @@ bool EffectClickRemoval::ProcessOne(int count, WaveTrack * track, sampleCount st
 
       s += block;
 
-      if (TrackProgress(count, s.as_double() /
-                               len.as_double())) {
+      if (context.TrackProgress(
+         count, s.as_double() / len.as_double())) {
          bResult = false;
          break;
       }
@@ -272,7 +272,7 @@ bool EffectClickRemoval::RemoveClicks(size_t len, float *buffer)
    return bResult;
 }
 
-std::unique_ptr<EffectUIValidator> EffectClickRemoval::PopulateOrExchange(
+std::unique_ptr<EffectEditor> EffectClickRemoval::PopulateOrExchange(
    ShuttleGui & S, EffectInstance &, EffectSettingsAccess &,
    const EffectOutputs *)
 {

@@ -15,9 +15,8 @@
 \brief a struct that holds a start and end time.
 
 *******************************************************************/
-
-
 #include "AutoDuck.h"
+#include "EffectEditor.h"
 #include "LoadEffects.h"
 
 #include <math.h>
@@ -27,7 +26,6 @@
 
 #include "AColor.h"
 #include "AllThemeResources.h"
-#include "Prefs.h"
 #include "../ShuttleGui.h"
 #include "Theme.h"
 #include "../widgets/valnum.h"
@@ -174,9 +172,10 @@ bool EffectAutoDuck::Init()
    return true;
 }
 
-bool EffectAutoDuck::Process(EffectInstance &, EffectSettings &)
+bool EffectAutoDuck::Process(EffectContext &context,
+   EffectInstance &, EffectSettings &)
 {
-   if (GetNumWaveTracks() == 0 || !mControlTrack)
+   if (context.numTracks == 0 || !mControlTrack)
       return false;
 
    bool cancel = false;
@@ -278,10 +277,10 @@ bool EffectAutoDuck::Process(EffectInstance &, EffectSettings &)
 
          pos += len;
 
-         if (TotalProgress(
+         if (context.TotalProgress(
             (pos - start).as_double() /
             (end - start).as_double() /
-            (GetNumWaveTracks() + 1)
+            (context.numTracks + 1)
          ))
          {
             cancel = true;
@@ -311,7 +310,8 @@ bool EffectAutoDuck::Process(EffectInstance &, EffectSettings &)
          for (size_t i = 0; i < regions.size(); i++)
          {
             const AutoDuckRegion& region = regions[i];
-            if (ApplyDuckFade(trackNum, iterTrack, region.t0, region.t1))
+            if (ApplyDuckFade(context,
+               trackNum, iterTrack, region.t0, region.t1))
             {
                cancel = true;
                break;
@@ -329,7 +329,7 @@ bool EffectAutoDuck::Process(EffectInstance &, EffectSettings &)
    return !cancel;
 }
 
-std::unique_ptr<EffectUIValidator> EffectAutoDuck::PopulateOrExchange(
+std::unique_ptr<EffectEditor> EffectAutoDuck::PopulateOrExchange(
    ShuttleGui & S, EffectInstance &, EffectSettingsAccess &,
    const EffectOutputs *)
 {
@@ -436,8 +436,8 @@ bool EffectAutoDuck::TransferDataFromWindow(EffectSettings &)
 // EffectAutoDuck implementation
 
 // this currently does an exponential fade
-bool EffectAutoDuck::ApplyDuckFade(int trackNum, WaveTrack* t,
-                                   double t0, double t1)
+bool EffectAutoDuck::ApplyDuckFade(EffectContext &context,
+   int trackNum, WaveTrack* t, double t0, double t1)
 {
    bool cancel = false;
 
@@ -489,8 +489,8 @@ bool EffectAutoDuck::ApplyDuckFade(int trackNum, WaveTrack* t,
 
       float curTime = t->LongSamplesToTime(pos);
       float fractionFinished = (curTime - mT0) / (mT1 - mT0);
-      if (TotalProgress( (trackNum + 1 + fractionFinished) /
-                         (GetNumWaveTracks() + 1) ))
+      if (context.TotalProgress(
+         (trackNum + 1 + fractionFinished) / (context.numTracks + 1) ))
       {
          cancel = true;
          break;

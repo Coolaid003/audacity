@@ -15,6 +15,7 @@
 
 
 #include "ChangeSpeed.h"
+#include "EffectEditor.h"
 #include "LoadEffects.h"
 
 #include <math.h>
@@ -24,7 +25,6 @@
 
 #include "ConfigInterface.h"
 #include "../LabelTrack.h"
-#include "Prefs.h"
 #include "Resample.h"
 #include "../ShuttleGui.h"
 #include "../SyncLock.h"
@@ -160,7 +160,7 @@ bool EffectChangeSpeed::CheckWhetherSkipEffect(const EffectSettings &) const
    return (m_PercentChange == 0.0);
 }
 
-double EffectChangeSpeed::CalcPreviewInputLength(
+double EffectChangeSpeed::CalcPreviewInputLength(const EffectContext &,
    const EffectSettings &, double previewLength) const
 {
    return previewLength * (100.0 + m_PercentChange) / 100.0;
@@ -174,7 +174,8 @@ bool EffectChangeSpeed::Init()
    return true;
 }
 
-bool EffectChangeSpeed::Process(EffectInstance &, EffectSettings &)
+bool EffectChangeSpeed::Process(EffectContext &context,
+   EffectInstance &, EffectSettings &)
 {
    // Similar to EffectSoundTouch::Process()
 
@@ -217,7 +218,7 @@ bool EffectChangeSpeed::Process(EffectInstance &, EffectSettings &)
             auto end = pOutWaveTrack->TimeToLongSamples(mCurT1);
 
             //ProcessOne() (implemented below) processes a single track
-            if (!ProcessOne(pOutWaveTrack, start, end))
+            if (!ProcessOne(context, pOutWaveTrack, start, end))
                bGoodResult = false;
          }
          mCurTrackNum++;
@@ -237,7 +238,7 @@ bool EffectChangeSpeed::Process(EffectInstance &, EffectSettings &)
    return bGoodResult;
 }
 
-std::unique_ptr<EffectUIValidator> EffectChangeSpeed::PopulateOrExchange(
+std::unique_ptr<EffectEditor> EffectChangeSpeed::PopulateOrExchange(
    ShuttleGui & S, EffectInstance &, EffectSettingsAccess &,
    const EffectOutputs *)
 {
@@ -434,8 +435,8 @@ bool EffectChangeSpeed::ProcessLabelTrack(LabelTrack *lt)
 
 // ProcessOne() takes a track, transforms it to bunch of buffer-blocks,
 // and calls libsamplerate code on these blocks.
-bool EffectChangeSpeed::ProcessOne(WaveTrack * track,
-                           sampleCount start, sampleCount end)
+bool EffectChangeSpeed::ProcessOne(EffectContext &context,
+   WaveTrack * track, sampleCount start, sampleCount end)
 {
    if (track == NULL)
       return false;
@@ -494,7 +495,8 @@ bool EffectChangeSpeed::ProcessOne(WaveTrack * track,
       samplePos += results.first;
 
       // Update the Progress meter
-      if (TrackProgress(mCurTrackNum, (samplePos - start).as_double() / len)) {
+      if (context.TrackProgress(
+         mCurTrackNum, (samplePos - start).as_double() / len)) {
          bResult = false;
          break;
       }
@@ -784,6 +786,6 @@ void EffectChangeSpeed::Update_TimeCtrl_ToLength()
 void EffectChangeSpeed::UpdateUI()
 // Disable OK and Preview if not in sensible range.
 {
-   EffectUIValidator::EnableApply(mUIParent,
+   EffectEditor::EnableApply(mUIParent,
       m_PercentChange >= Percentage.min && m_PercentChange <= Percentage.max);
 }

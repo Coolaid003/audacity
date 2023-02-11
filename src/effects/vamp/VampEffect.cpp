@@ -10,11 +10,9 @@
   http://www.vamp-plugins.org/
 
 **********************************************************************/
-
-
-
 #if defined(USE_VAMP)
 #include "VampEffect.h"
+#include "../EffectEditor.h"
 
 #include <vamp-hostsdk/Plugin.h>
 #include <vamp-hostsdk/PluginChannelAdapter.h>
@@ -336,7 +334,8 @@ bool VampEffect::Init()
    return true;
 }
 
-bool VampEffect::Process(EffectInstance &, EffectSettings &)
+bool VampEffect::Process(EffectContext &context,
+   EffectInstance &, EffectSettings &)
 {
    if (!mPlugin)
    {
@@ -348,7 +347,7 @@ bool VampEffect::Process(EffectInstance &, EffectSettings &)
    bool multiple = false;
    unsigned prevTrackChannels = 0;
 
-   if (GetNumWaveGroups() > 1)
+   if (context.numGroups > 1)
    {
       // if there is another track beyond this one and any linked one,
       // then we're processing more than one track.  That means we
@@ -491,7 +490,7 @@ bool VampEffect::Process(EffectInstance &, EffectSettings &)
 
          if (channels > 1)
          {
-            if (TrackGroupProgress(count,
+            if (context.TrackGroupProgress(count,
                   (pos - start).as_double() /
                   originalLen.as_double() ))
             {
@@ -500,7 +499,7 @@ bool VampEffect::Process(EffectInstance &, EffectSettings &)
          }
          else
          {
-            if (TrackProgress(count,
+            if (context.TrackProgress(count,
                   (pos - start).as_double() /
                   originalLen.as_double() ))
             {
@@ -522,7 +521,7 @@ bool VampEffect::Process(EffectInstance &, EffectSettings &)
    return true;
 }
 
-std::unique_ptr<EffectUIValidator> VampEffect::PopulateOrExchange(
+std::unique_ptr<EffectEditor> VampEffect::PopulateOrExchange(
    ShuttleGui & S, EffectInstance &, EffectSettingsAccess &,
    const EffectOutputs *)
 {

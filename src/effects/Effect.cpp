@@ -14,21 +14,17 @@
 \brief Base class for many of the effects in Audacity.
 
 *//*******************************************************************/
-
-
 #include "Effect.h"
 
 #include <algorithm>
 
 #include <wx/defs.h>
-#include <wx/sizer.h>
 
 #include "ConfigInterface.h"
 #include "../LabelTrack.h"
 #include "../ProjectSettings.h"
-#include "../SelectFile.h"
 #include "../ShuttleAutomation.h"
-#include "../ShuttleGui.h"
+#include "StatefulEffectUIServices.h"
 #include "../SyncLock.h"
 #include "ViewInfo.h"
 #include "../WaveTrack.h"
@@ -36,31 +32,8 @@
 #include "../widgets/ProgressDialog.h"
 #include "../widgets/NumericTextCtrl.h"
 #include "../widgets/AudacityMessageBox.h"
-#include "../widgets/VetoDialogHook.h"
 
 #include <unordered_map>
-
-static const int kPlayID = 20102;
-static_assert(kPlayID == EffectUIValidator::kPlayID);
-
-using t2bHash = std::unordered_map< void*, bool >;
-
-bool StatefulEffect::Instance::Process(EffectSettings &settings)
-{
-   return GetEffect().Process(*this, settings);
-}
-
-auto StatefulEffect::Instance::GetLatency(const EffectSettings &, double) const
-   -> SampleCount
-{
-   return GetEffect().GetLatency().as_long_long();
-}
-
-size_t StatefulEffect::Instance::ProcessBlock(EffectSettings &,
-   const float *const *, float *const *, size_t)
-{
-   return 0;
-}
 
 Effect::Effect()
 {
@@ -68,11 +41,6 @@ Effect::Effect()
 
 Effect::~Effect()
 {
-   // Destroying what is usually the unique Effect object of its subclass,
-   // which lasts until the end of the session.
-   // Maybe there is a non-modal realtime dialog still open.
-   if (mHostUIDialog)
-      mHostUIDialog->Close();
 }
 
 // ComponentInterface implementation
@@ -136,82 +104,10 @@ bool Effect::SupportsAutomation() const
    return true;
 }
 
-std::shared_ptr<EffectInstance> StatefulEffect::MakeInstance() const
-{
-   // Cheat with const-cast to return an object that calls through to
-   // non-const methods of a stateful effect.
-   // Stateless effects should override this function and be really const
-   // correct.
-   return std::make_shared<Instance>(const_cast<StatefulEffect&>(*this));
-}
-
 const EffectParameterMethods &Effect::Parameters() const
 {
    static const CapturedParameters<Effect> empty;
    return empty;
-}
-
-int Effect::ShowClientInterface(wxWindow &parent, wxDialog &dialog,
-   EffectUIValidator *, bool forceModal)
-{
-   // Remember the dialog with a weak pointer, but don't control its lifetime
-   mUIDialog = &dialog;
-   mUIDialog->Layout();
-   mUIDialog->Fit();
-   mUIDialog->SetMinSize(mUIDialog->GetSize());
-   if (VetoDialogHook::Call(mUIDialog))
-      return 0;
-   if (SupportsRealtime() && !forceModal) {
-      mUIDialog->Show();
-      // Return false to bypass effect processing
-      return 0;
-   }
-   return mUIDialog->ShowModal();
-}
-
-int Effect::ShowHostInterface(wxWindow &parent,
-   const EffectDialogFactory &factory,
-   std::shared_ptr<EffectInstance> &pInstance, EffectSettingsAccess &access,
-   bool forceModal)
-{
-   if (!IsInteractive())
-      // Effect without UI just proceeds quietly to apply it destructively.
-      return wxID_APPLY;
-
-   if (mHostUIDialog)
-   {
-      // Realtime effect has shown its nonmodal dialog, now hides it, and does
-      // nothing else.
-      if ( mHostUIDialog->Close(true) )
-         mHostUIDialog = nullptr;
-      return 0;
-   }
-
-   // Create the dialog
-   // Host, not client, is responsible for invoking the factory and managing
-   // the lifetime of the dialog.
-   // The usual factory lets the client (which is this, when self-hosting)
-   // populate it.  That factory function is called indirectly through a
-   // std::function to avoid source code dependency cycles.
-   EffectUIClientInterface *const client = this;
-   auto results = factory(parent, *this, *client, access);
-   mHostUIDialog = results.pDialog;
-   pInstance = results.pInstance;
-   if (!mHostUIDialog)
-      return 0;
-
-   // Let the client show the dialog and decide whether to keep it open
-   auto result = client->ShowClientInterface(parent, *mHostUIDialog,
-      results.pValidator, forceModal);
-   if (mHostUIDialog && !mHostUIDialog->IsShown())
-      // Client didn't show it, or showed it modally and closed it
-      // So destroy it.
-      // (I think mHostUIDialog only needs to be a local variable in this
-      // function -- that it is always null when the function begins -- but
-      // that may change. PRL)
-      mHostUIDialog->Destroy();
-
-   return result;
 }
 
 bool Effect::VisitSettings(SettingsVisitor &visitor, EffectSettings &settings)
@@ -282,172 +178,14 @@ OptionalMessage Effect::LoadFactoryDefaults(EffectSettings &settings) const
    return LoadUserPreset(FactoryDefaultsGroup(), settings);
 }
 
-// EffectUIClientInterface implementation
-
-std::unique_ptr<EffectUIValidator> Effect::PopulateUI(ShuttleGui &S,
-   EffectInstance &instance, EffectSettingsAccess &access,
-   const EffectOutputs *pOutputs)
+bool Effect::CanExportPresets() const
 {
-   auto parent = S.GetParent();
-   mUIParent = parent;
-
-//   LoadUserPreset(CurrentSettingsGroup());
-
-   // Let the effect subclass provide its own validator if it wants
-   auto result = PopulateOrExchange(S, instance, access, pOutputs);
-
-   mUIParent->SetMinSize(mUIParent->GetSizer()->GetMinSize());
-
-   if (!result) {
-      // No custom validator object?  Then use the default
-      result = std::make_unique<DefaultEffectUIValidator>(
-         *this, access, S.GetParent());
-      mUIParent->PushEventHandler(this);
-   }
-   return result;
+   return true;
 }
 
-bool Effect::IsGraphicalUI()
+bool Effect::HasOptions() const
 {
    return false;
-}
-
-bool Effect::ValidateUI(EffectSettings &)
-{
-   return true;
-}
-
-bool Effect::CloseUI()
-{
-   mUIParent = nullptr;
-   mUIDialog = nullptr;
-   return true;
-}
-
-bool Effect::CanExportPresets()
-{
-   return true;
-}
-
-static const FileNames::FileTypes &PresetTypes()
-{
-   static const FileNames::FileTypes result {
-      { XO("Presets"), { wxT("txt") }, true },
-      FileNames::AllFiles
-   };
-   return result;
-};
-
-void Effect::ExportPresets(const EffectSettings &settings) const
-{
-   wxString params;
-   SaveSettingsAsString(settings, params);
-   auto commandId = GetSquashedName(GetSymbol().Internal());
-   params =  commandId.GET() + ":" + params;
-
-   auto path = SelectFile(FileNames::Operation::Presets,
-                                     XO("Export Effect Parameters"),
-                                     wxEmptyString,
-                                     wxEmptyString,
-                                     wxEmptyString,
-                                     PresetTypes(),
-                                     wxFD_SAVE | wxFD_OVERWRITE_PROMPT | wxRESIZE_BORDER,
-                                     nullptr);
-   if (path.empty()) {
-      return;
-   }
-
-   // Create/Open the file
-   wxFFile f(path, wxT("wb"));
-   if (!f.IsOpened())
-   {
-      AudacityMessageBox(
-         XO("Could not open file: \"%s\"").Format( path ),
-         XO("Error Saving Effect Presets"),
-         wxICON_EXCLAMATION,
-         NULL);
-      return;
-   }
-
-   f.Write(params);
-   if (f.Error())
-   {
-      AudacityMessageBox(
-         XO("Error writing to file: \"%s\"").Format( path ),
-         XO("Error Saving Effect Presets"),
-         wxICON_EXCLAMATION,
-         NULL);
-   }
-
-   f.Close();
-
-
-   //SetWindowTitle();
-
-}
-
-OptionalMessage Effect::ImportPresets(EffectSettings &settings)
-{
-   wxString params;
-
-   auto path = SelectFile(FileNames::Operation::Presets,
-                                     XO("Import Effect Parameters"),
-                                     wxEmptyString,
-                                     wxEmptyString,
-                                     wxEmptyString,
-                                     PresetTypes(),
-                                     wxFD_OPEN | wxRESIZE_BORDER,
-                                     nullptr);
-   if (path.empty()) {
-      return {};
-   }
-
-   wxFFile f(path);
-   if (!f.IsOpened())
-      return {};
-
-   OptionalMessage result{};
-
-   if (f.ReadAll(&params)) {
-      wxString ident = params.BeforeFirst(':');
-      params = params.AfterFirst(':');
-
-      auto commandId = GetSquashedName(GetSymbol().Internal());
-
-      if (ident != commandId) {
-         // effect identifiers are a sensible length!
-         // must also have some params.
-         if ((params.Length() < 2 ) || (ident.Length() < 2) || (ident.Length() > 30))
-         {
-            Effect::MessageBox(
-               /* i18n-hint %s will be replaced by a file name */
-               XO("%s: is not a valid presets file.\n")
-               .Format(wxFileNameFromPath(path)));
-         }
-         else
-         {
-            Effect::MessageBox(
-               /* i18n-hint %s will be replaced by a file name */
-               XO("%s: is for a different Effect, Generator or Analyzer.\n")
-               .Format(wxFileNameFromPath(path)));
-         }
-         return {};
-      }
-      result = LoadSettingsFromString(params, settings);
-   }
-
-   //SetWindowTitle();
-
-   return result;
-}
-
-bool Effect::HasOptions()
-{
-   return false;
-}
-
-void Effect::ShowOptions()
-{
 }
 
 // EffectPlugin implementation
@@ -559,10 +297,6 @@ OptionalMessage Effect::LoadSettingsFromString(
    return result;
 }
 
-unsigned Effect::TestUIFlags(unsigned mask) {
-   return mask & mUIFlags;
-}
-
 bool Effect::IsBatchProcessing() const
 {
    return mIsBatch;
@@ -590,58 +324,14 @@ void Effect::UnsetBatchProcessing()
    (void ) LoadUserPreset(GetSavedStateGroup(), dummySettings);
 }
 
-bool Effect::Delegate(Effect &delegate, EffectSettings &settings)
+bool Effect::Delegate(
+   EffectContext &context, Effect &delegate, EffectSettings &settings)
 {
    NotifyingSelectedRegion region;
    region.setTimes( mT0, mT1 );
 
-   return delegate.DoEffect(settings, mProjectRate, mTracks, mFactory,
-      region, mUIFlags, nullptr, nullptr, nullptr);
-}
-
-std::unique_ptr<EffectUIValidator> Effect::PopulateOrExchange(
-   ShuttleGui &, EffectInstance &, EffectSettingsAccess &,
-   const EffectOutputs *)
-{
-   return nullptr;
-}
-
-bool Effect::TransferDataToWindow(const EffectSettings &)
-{
-   return true;
-}
-
-bool Effect::TransferDataFromWindow(EffectSettings &)
-{
-   return true;
-}
-
-bool Effect::TotalProgress(double frac, const TranslatableString &msg) const
-{
-   auto updateResult = (mProgress ?
-      mProgress->Poll(frac * 1000, 1000, msg) :
-      ProgressResult::Success);
-   return (updateResult != ProgressResult::Success);
-}
-
-bool Effect::TrackProgress(
-   int whichTrack, double frac, const TranslatableString &msg) const
-{
-   auto updateResult = (mProgress ?
-      mProgress->Poll((whichTrack + frac) * 1000,
-         (double) mNumTracks * 1000, msg) :
-      ProgressResult::Success);
-   return (updateResult != ProgressResult::Success);
-}
-
-bool Effect::TrackGroupProgress(
-   int whichGroup, double frac, const TranslatableString &msg) const
-{
-   auto updateResult = (mProgress ?
-      mProgress->Poll((whichGroup + frac) * 1000,
-         (double) mNumGroups * 1000, msg) :
-      ProgressResult::Success);
-   return (updateResult != ProgressResult::Success);
+   return delegate.DoEffect(context, settings, {},
+      mProjectRate, mTracks, region, nullptr);
 }
 
 void Effect::GetBounds(
@@ -690,8 +380,6 @@ void Effect::CopyInputTracks(bool allSyncLockSelected)
          ? SyncLock::IsSelectedOrSyncLockSelected(pTrack)
          : track_cast<const WaveTrack*>( pTrack ) && pTrack->GetSelected();
       };
-
-   t2bHash added;
 
    for (auto aTrack : trackRange)
    {
@@ -798,7 +486,7 @@ bool Effect::CheckWhetherSkipEffect(const EffectSettings &) const
    return false;
 }
 
-double Effect::CalcPreviewInputLength(
+double Effect::CalcPreviewInputLength(const EffectContext &,
    const EffectSettings &, double previewLength) const
 {
    return previewLength;
@@ -810,44 +498,5 @@ int Effect::MessageBox( const TranslatableString& message,
    auto title = titleStr.empty()
       ? GetName()
       : XO("%s: %s").Format( GetName(), titleStr );
-   return AudacityMessageBox( message, title, style, mUIParent );
-}
-EffectUIClientInterface* Effect::GetEffectUIClientInterface()
-{
-   return this;
-}
-
-DefaultEffectUIValidator::DefaultEffectUIValidator(
-   EffectUIClientInterface &effect, EffectSettingsAccess &access,
-   wxWindow *pParent)
-   : EffectUIValidator{ effect, access }, mpParent{ pParent }
-{
-}
-
-DefaultEffectUIValidator::~DefaultEffectUIValidator()
-{
-   Disconnect();
-}
-
-bool DefaultEffectUIValidator::ValidateUI()
-{
-   bool result {};
-   mAccess.ModifySettings([&](EffectSettings &settings){
-      result = mEffect.ValidateUI(settings);
-      return nullptr;
-   });
-   return result;
-}
-
-bool DefaultEffectUIValidator::IsGraphicalUI()
-{
-   return mEffect.IsGraphicalUI();
-}
-
-void DefaultEffectUIValidator::Disconnect()
-{
-   if (mpParent) {
-      mpParent->PopEventHandler();
-      mpParent = nullptr;
-   }
+   return AudacityMessageBox(message, title, style);
 }

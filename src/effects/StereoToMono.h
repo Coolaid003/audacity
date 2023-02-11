@@ -11,7 +11,7 @@
 #ifndef __AUDACITY_EFFECT_STEREO_TO_MONO__
 #define __AUDACITY_EFFECT_STEREO_TO_MONO__
 
-#include "Effect.h"
+#include "StatefulEffect.h"
 
 class EffectStereoToMono final : public StatefulEffect
 {
@@ -36,13 +36,16 @@ public:
 
    // Effect implementation
 
-   bool Process(EffectInstance &instance, EffectSettings &settings) override;
+   bool Process(EffectContext &context,
+      EffectInstance &instance, EffectSettings &settings) override;
    bool IsHiddenFromMenus() const override;
 
 private:
    // EffectStereoToMono implementation
 
-   bool ProcessOne(sampleCount & curTime, sampleCount totalTime, WaveTrack *left, WaveTrack *right);
+   bool ProcessOne(EffectContext &context,
+      sampleCount & curTime, sampleCount totalTime,
+      WaveTrack *left, WaveTrack *right);
 
 };
 

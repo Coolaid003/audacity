@@ -18,7 +18,7 @@
 
 #if USE_SBSMS
 
-#include "Effect.h"
+#include "StatefulEffect.h"
 #include <sbsms.h>
 
 using namespace _sbsms_;
@@ -29,7 +29,8 @@ class TimeWarper;
 class EffectSBSMS /* not final */ : public StatefulEffect
 {
 public:
-   bool Process(EffectInstance &instance, EffectSettings &settings) override;
+   bool Process(EffectContext &context,
+      EffectInstance &instance, EffectSettings &settings) override;
    void setParameters(double rateStart, double rateEnd, double pitchStart, double pitchEnd,
                       SlideType rateSlideType, SlideType pitchSlideType,
                       bool bLinkRatePitch, bool bRateReferenceInput, bool bPitchReferenceInput);

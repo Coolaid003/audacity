@@ -16,7 +16,7 @@
 #ifndef __AUDACITY_EFFECT_CLICK_REMOVAL__
 #define __AUDACITY_EFFECT_CLICK_REMOVAL__
 
-#include "Effect.h"
+#include "StatefulEffect.h"
 #include "../ShuttleAutomation.h"
 
 class wxSlider;
@@ -47,16 +47,17 @@ public:
    // Effect implementation
 
    bool CheckWhetherSkipEffect(const EffectSettings &settings) const override;
-   bool Process(EffectInstance &instance, EffectSettings &settings) override;
-   std::unique_ptr<EffectUIValidator> PopulateOrExchange(
+   bool Process(EffectContext &context,
+      EffectInstance &instance, EffectSettings &settings) override;
+   std::unique_ptr<EffectEditor> PopulateOrExchange(
       ShuttleGui & S, EffectInstance &instance,
       EffectSettingsAccess &access, const EffectOutputs *pOutputs) override;
    bool TransferDataToWindow(const EffectSettings &settings) override;
    bool TransferDataFromWindow(EffectSettings &settings) override;
 
 private:
-   bool ProcessOne(int count, WaveTrack * track,
-                   sampleCount start, sampleCount len);
+   bool ProcessOne(EffectContext &context,
+      int count, WaveTrack * track, sampleCount start, sampleCount len);
 
    bool RemoveClicks(size_t len, float *buffer);
 

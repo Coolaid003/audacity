@@ -13,7 +13,7 @@
 #ifndef __AUDACITY_EFFECT_CHANGESPEED__
 #define __AUDACITY_EFFECT_CHANGESPEED__
 
-#include "Effect.h"
+#include "StatefulEffect.h"
 #include "../ShuttleAutomation.h"
 
 class wxSlider;
@@ -46,11 +46,12 @@ public:
    OptionalMessage DoLoadFactoryDefaults(EffectSettings &settings);
 
    bool CheckWhetherSkipEffect(const EffectSettings &settings) const override;
-   double CalcPreviewInputLength(
+   double CalcPreviewInputLength(const EffectContext &context,
       const EffectSettings &settings, double previewLength) const override;
    bool Init() override;
-   bool Process(EffectInstance &instance, EffectSettings &settings) override;
-   std::unique_ptr<EffectUIValidator> PopulateOrExchange(
+   bool Process(EffectContext &context,
+      EffectInstance &instance, EffectSettings &settings) override;
+   std::unique_ptr<EffectEditor> PopulateOrExchange(
       ShuttleGui & S, EffectInstance &instance,
       EffectSettingsAccess &access, const EffectOutputs *pOutputs) override;
    bool TransferDataToWindow(const EffectSettings &settings) override;
@@ -59,7 +60,8 @@ public:
 private:
    // EffectChangeSpeed implementation
 
-   bool ProcessOne(WaveTrack *t, sampleCount start, sampleCount end);
+   bool ProcessOne(EffectContext &context, WaveTrack *t,
+      sampleCount start, sampleCount end);
    bool ProcessLabelTrack(LabelTrack *t);
 
    // handlers

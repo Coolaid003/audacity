@@ -16,7 +16,7 @@
 #include <wx/stattext.h>
 #include <wx/textctrl.h>
 
-#include "Effect.h"
+#include "StatefulEffect.h"
 #include "Biquad.h"
 #include "EBUR128.h"
 #include "../ShuttleAutomation.h"
@@ -55,8 +55,9 @@ public:
 
    // Effect implementation
 
-   bool Process(EffectInstance &instance, EffectSettings &settings) override;
-   std::unique_ptr<EffectUIValidator> PopulateOrExchange(
+   bool Process(EffectContext &context,
+      EffectInstance &instance, EffectSettings &settings) override;
+   std::unique_ptr<EffectEditor> PopulateOrExchange(
       ShuttleGui & S, EffectInstance &instance,
       EffectSettingsAccess &access, const EffectOutputs *pOutputs) override;
    bool TransferDataToWindow(const EffectSettings &settings) override;
@@ -68,15 +69,16 @@ private:
    void AllocBuffers();
    void FreeBuffers();
    bool GetTrackRMS(WaveTrack* track, float& rms);
-   bool ProcessOne(TrackIterRange<WaveTrack> range, bool analyse);
+   bool ProcessOne(EffectContext &context,
+      TrackIterRange<WaveTrack> range, bool analyse);
    void LoadBufferBlock(TrackIterRange<WaveTrack> range,
                         sampleCount pos, size_t len);
-   bool AnalyseBufferBlock();
-   bool ProcessBufferBlock();
+   bool AnalyseBufferBlock(EffectContext &context);
+   bool ProcessBufferBlock(EffectContext &context);
    void StoreBufferBlock(TrackIterRange<WaveTrack> range,
                          sampleCount pos, size_t len);
 
-   bool UpdateProgress();
+   bool UpdateProgress(EffectContext &context);
    void OnChoice(wxCommandEvent & evt);
    void OnUpdateUI(wxCommandEvent & evt);
    void UpdateUI();

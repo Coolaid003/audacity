@@ -19,17 +19,17 @@
 #include <wx/dialog.h>
 
 #include "EffectPlugin.h" // to inherit
-#include "EffectInterface.h" // to inherit
 
+#include <any>
 
 namespace BasicUI { class ProgressDialog; }
 
 class AudacityProject;
+class DoubleSetting;
 class Track;
 
 class AUDACITY_DLL_API EffectBase /* not final */
-   : public EffectUIClientInterface
-   , public EffectPlugin
+   : public EffectPlugin
 {
 public:
    EffectBase();
@@ -37,21 +37,28 @@ public:
 
    void SetTracks(TrackList *pTracks) { mTracks = pTracks; }
 
-protected:
+   //! Called when Preview() starts, to allow temporary effect state changes
+   /*!
+    default returns a null
+    @return will undo its effects in its destructor before Preview() finishes
+    */
+   virtual std::any BeginPreview(const EffectSettings &settings);
+
    // The EffectBase class fully implements the Preview method for you.
    // Only override it if you need to do preprocessing or cleanup.
-   void Preview(EffectSettingsAccess &access, bool dryOnly) override;
+   void Preview(EffectContext &context,
+      EffectSettingsAccess &access, std::function<void()> updateUI,
+      bool dryOnly) final;
 
-   bool DoEffect(EffectSettings &settings, //!< Always given; only for processing
+   bool DoEffect(EffectContext &context,
+      EffectSettings &settings, //!< Always given; only for processing
+      const InstanceFinder &finder,
       double projectRate, TrackList *list,
-      WaveTrackFactory *factory, NotifyingSelectedRegion &selectedRegion,
-      unsigned flags,
-      // Prompt the user for input only if the next arguments are not all null.
-      wxWindow *pParent,
-      const EffectDialogFactory &dialogFactory,
+      NotifyingSelectedRegion &selectedRegion,
       const EffectSettingsAccessPtr &pAccess //!< Sometimes given; only for UI
    ) override;
 
+protected:
    //! After Init(), tell whether Process() should be skipped
    /*
      Typically this is only useful in automation, for example
@@ -69,7 +76,7 @@ protected:
 
      @return seconds
     */
-   virtual double CalcPreviewInputLength(
+   virtual double CalcPreviewInputLength(const EffectContext &context,
       const EffectSettings &settings, double previewLength) const = 0;
 
    // Previewing linear effect can be optimised by pre-mixing. However this
@@ -81,14 +88,6 @@ protected:
    // (such as fade effects) need to know the full selection length.
    void SetPreviewFullSelectionFlag(bool previewDurationFlag);
 
-   // Use this if the effect needs to know if it is previewing
-   bool IsPreviewing() const { return mIsPreview; }
-
-   // Most effects only require selected tracks to be copied for Preview.
-   // If IncludeNotSelectedPreviewTracks(true), then non-linear effects have
-   // preview copies of all wave tracks.
-   void IncludeNotSelectedPreviewTracks(bool includeNotSelected);
-
    // A global counter of all the successful Effect invocations.
    static int nEffectsDone;
 
@@ -97,10 +96,8 @@ protected:
    // Else clear and DELETE mOutputTracks copies.
    void ReplaceProcessedTracks(const bool bGoodResult);
 
-   BasicUI::ProgressDialog *mProgress{}; // Temporary pointer, NOT deleted in destructor.
    double         mProjectRate{}; // Sample rate of the project - NEW tracks should
                                // be created with this rate...
-   WaveTrackFactory   *mFactory{};
    const TrackList *inputTracks() const { return mTracks; }
    const AudacityProject *FindProject() const;
    // used only if CopyInputTracks() is called.
@@ -112,31 +109,25 @@ protected:
    double         mF1{};
 #endif
    wxArrayString  mPresetNames;
-   unsigned       mUIFlags{ 0 };
 
 private:
    friend class Effect;
 
-   //! This weak pointer may be the same as mUIParent, or null
-   wxWeakRef<wxDialog> mUIDialog;
-
    double GetDefaultDuration();
 
-   void CountWaveTracks();
-
    TrackList *mTracks{}; // the complete list of all tracks
-   //! This weak pointer may be the same as mHostUIDialog, or null
-   bool mIsLinearEffect{ false };
-   bool mPreviewWithNotSelected{ false };
-   bool mPreviewFullSelection{ false };
 
-   bool mIsPreview{ false };
+   /* Consider these boolean members to be immutable properties of the effect,
+    not state variables.  Usually set only during construction of the effect
+    object.  (Exception possibly only for Nyquist effects that might detect
+    in-session editing of the script file and reassign them; but that is
+    interactive development by power users only)
+    */
+   bool mIsLinearEffect{ false };
+   bool mPreviewFullSelection{ false };
 
    std::vector<Track*> mIMap;
    std::vector<Track*> mOMap;
-
-   int mNumTracks{}; //v This is really mNumWaveTracks, per CountWaveTracks() and GetNumWaveTracks().
-   int mNumGroups{};
 };
 
 /* i18n-hint: "Nyquist" is an embedded interpreted programming language in
@@ -144,5 +135,7 @@ private:
  In the translations of this and other strings, you may transliterate the
  name into another alphabet.  */
 #define NYQUISTEFFECTS_FAMILY ( EffectFamilySymbol{ XO("Nyquist") } )
+
+extern AUDACITY_DLL_API DoubleSetting EffectPreviewLength;
 
 #endif

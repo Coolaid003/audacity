@@ -74,7 +74,8 @@ unsigned EffectStereoToMono::GetAudioOutCount() const
 
 // Effect implementation
 
-bool EffectStereoToMono::Process(EffectInstance &, EffectSettings &)
+bool EffectStereoToMono::Process(EffectContext &context,
+   EffectInstance &, EffectSettings &)
 {
    // Do not use mWaveTracks here.  We will possibly DELETE tracks,
    // so we must use the "real" tracklist.
@@ -99,14 +100,16 @@ bool EffectStereoToMono::Process(EffectInstance &, EffectSettings &)
          {
             if (leftRate != mProjectRate)
             {
-               mProgress->SetMessage(XO("Resampling left channel"));
-               left->Resample(mProjectRate, mProgress);
+               if (context.pProgress)
+                  context.pProgress->SetMessage(XO("Resampling left channel"));
+               left->Resample(mProjectRate, context.pProgress);
                leftRate = mProjectRate;
             }
             if (rightRate != mProjectRate)
             {
-               mProgress->SetMessage(XO("Resampling right channel"));
-               right->Resample(mProjectRate, mProgress);
+               if (context.pProgress)
+                  context.pProgress->SetMessage(XO("Resampling right channel"));
+               right->Resample(mProjectRate, context.pProgress);
                rightRate = mProjectRate;
             }
          }
@@ -127,7 +130,8 @@ bool EffectStereoToMono::Process(EffectInstance &, EffectSettings &)
    sampleCount curTime = 0;
    bool refreshIter = false;
 
-   mProgress->SetMessage(XO("Mixing down to mono"));
+   if (context.pProgress)
+      context.pProgress->SetMessage(XO("Mixing down to mono"));
 
    trackRange = mOutputTracks->SelectedLeaders< WaveTrack >();
    while (trackRange.first != trackRange.second)
@@ -138,7 +142,7 @@ bool EffectStereoToMono::Process(EffectInstance &, EffectSettings &)
       {
          auto right = *channels.rbegin();
 
-         bGoodResult = ProcessOne(curTime, totalTime, left, right);
+         bGoodResult = ProcessOne(context, curTime, totalTime, left, right);
          if (!bGoodResult)
          {
             break;
@@ -163,7 +167,9 @@ bool EffectStereoToMono::Process(EffectInstance &, EffectSettings &)
    return bGoodResult;
 }
 
-bool EffectStereoToMono::ProcessOne(sampleCount & curTime, sampleCount totalTime, WaveTrack *left, WaveTrack *right)
+bool EffectStereoToMono::ProcessOne(EffectContext &context,
+   sampleCount & curTime, sampleCount totalTime,
+   WaveTrack *left, WaveTrack *right)
 {
    auto idealBlockLen = left->GetMaxBlockSize() * 2;
    bool bResult = true;
@@ -206,7 +212,8 @@ bool EffectStereoToMono::ProcessOne(sampleCount & curTime, sampleCount totalTime
       outTrack->Append(buffer, floatSample, blockLen, 1);
 
       curTime += blockLen;
-      if (TotalProgress(curTime.as_double() / totalTime.as_double()))
+      if (context.TotalProgress(
+         curTime.as_double() / totalTime.as_double()))
       {
          return false;
       }

@@ -11,7 +11,7 @@
 #ifndef __AUDACITY_EFFECT_AUTODUCK__
 #define __AUDACITY_EFFECT_AUTODUCK__
 
-#include "Effect.h"
+#include "StatefulEffect.h"
 #include "../ShuttleAutomation.h"
 #include <float.h> // for DBL_MAX
 #include "../widgets/wxPanelWrapper.h"
@@ -45,8 +45,9 @@ public:
    // Effect implementation
 
    bool Init() override;
-   bool Process(EffectInstance &instance, EffectSettings &settings) override;
-   std::unique_ptr<EffectUIValidator> PopulateOrExchange(
+   bool Process(EffectContext &context,
+      EffectInstance &instance, EffectSettings &settings) override;
+   std::unique_ptr<EffectEditor> PopulateOrExchange(
       ShuttleGui & S, EffectInstance &instance,
       EffectSettingsAccess &access, const EffectOutputs *pOutputs) override;
    bool TransferDataToWindow(const EffectSettings &settings) override;
@@ -56,7 +57,8 @@ public:
 private:
    // EffectAutoDuck implementation
 
-   bool ApplyDuckFade(int trackNum, WaveTrack *t, double t0, double t1);
+   bool ApplyDuckFade(EffectContext &context,
+      int trackNum, WaveTrack *t, double t0, double t1);
 
    void OnValueChanged(wxCommandEvent & evt);
 
