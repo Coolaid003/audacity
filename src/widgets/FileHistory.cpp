@@ -17,17 +17,15 @@
 #include "FileHistory.h"
 
 #include <wx/defs.h>
-#include <wx/menu.h>
 
 #include "Internat.h"
 #include "Prefs.h"
 
 #include <mutex>
 
-FileHistory::FileHistory(size_t maxfiles, wxWindowID base)
+FileHistory::FileHistory(size_t maxfiles)
 {
    mMaxFiles = maxfiles;
-   mIDBase = base;
 }
 
 FileHistory::~FileHistory()
@@ -37,8 +35,7 @@ FileHistory::~FileHistory()
 FileHistory &FileHistory::Global()
 {
    // TODO - read the number of files to store in history from preferences
-   static FileHistory history{
-      ID_RECENT_LAST - ID_RECENT_FIRST + 1, ID_RECENT_CLEAR };
+   static FileHistory history;
    static std::once_flag flag;
    std::call_once( flag, [&]{
       history.Load(*gPrefs, wxT("RecentFiles"));
@@ -94,23 +91,6 @@ void FileHistory::Clear()
    NotifyMenus();
 }
 
-void FileHistory::UseMenu(wxMenu *menu)
-{
-   Compress();
-
-   auto end = mMenus.end();
-   auto iter = std::find(mMenus.begin(), end, menu);
-   auto found = (iter != end);
-
-   if (!found)
-      mMenus.push_back(menu);
-   else {
-      wxASSERT(false);
-   }
-
-   NotifyMenu( menu );
-}
-
 void FileHistory::Load(wxConfigBase & config, const wxString & group)
 {
    mHistory.clear();
@@ -152,40 +132,6 @@ void FileHistory::Save(wxConfigBase & config)
 
 void FileHistory::NotifyMenus()
 {
-   Compress();
-   for (auto pMenu : mMenus)
-      if (pMenu)
-         NotifyMenu(pMenu);
+   Publish({});
    Save(*gPrefs);
 }
-
-void FileHistory::NotifyMenu(wxMenu *menu)
-{
-   wxMenuItemList items = menu->GetMenuItems();
-   for (auto end = items.end(), iter = items.begin(); iter != end;)
-      menu->Destroy(*iter++);
-
-   for (size_t i = 0; i < mHistory.size(); i++) {
-      wxString item =  mHistory[i];
-      item.Replace( "&", "&&" );
-      menu->Append(mIDBase + 1 + i,item);
-   }
-
-   if (mHistory.size() > 0) {
-      menu->AppendSeparator();
-   }
-   menu->Append(mIDBase, _("&Clear"));
-   menu->Enable(mIDBase, mHistory.size() > 0);
-}
-
-void FileHistory::Compress()
-{
-   // Clear up expired weak pointers
-   auto end = mMenus.end();
-   mMenus.erase(
-     std::remove_if( mMenus.begin(), end,
-        [](wxWeakRef<wxMenu> &pMenu){ return !pMenu; } ),
-     end
-   );
-}
-

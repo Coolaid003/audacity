@@ -50,6 +50,7 @@ Paul Licameli split from AudacityProject.cpp
 #include "widgets/WindowAccessible.h"
 
 #include <wx/app.h>
+#include <wx/menu.h>
 #include <wx/scrolbar.h>
 #include <wx/sizer.h>
 #include <wx/splitter.h>
@@ -887,4 +888,152 @@ int ProjectManager::GetEstimatedRecordingMinsLeftOnDisk(long lCaptureChannels) {
    // Convert to minutes before returning
    int iRecMins = (int)round(dRecTime / 60.0);
    return iRecMins;
+}
+
+void ProjectManager::UseMenu(wxMenu *menu)
+{
+   FileHistoryMenus::Instance().UseMenu(menu);
+}
+
+//vvv Basically, anything from Recent Files is treated as a .aup3, until proven otherwise,
+// then it tries to Import(). Very questionable handling, imo.
+// Better, for example, to check the file type early on.
+void ProjectManager::OnMRUFile(wxCommandEvent& event) {
+   int n = event.GetId() - FileHistoryMenus::ID_RECENT_FIRST;
+   auto &history = FileHistory::Global();
+   const auto &fullPathStr = history[ n ];
+
+   // Try to open only if not already open.
+   // Test IsAlreadyOpen() here even though AudacityProject::MRUOpen() also now checks,
+   // because we don't want to Remove() just because it already exists,
+   // and AudacityApp::OnMacOpenFile() calls MRUOpen() directly.
+   // that method does not return the bad result.
+   // PRL: Don't call SafeMRUOpen
+   // -- if open fails for some exceptional reason of resource exhaustion that
+   // the user can correct, leave the file in history.
+   if (!ProjectFileManager::IsAlreadyOpen(fullPathStr) && !MRUOpen(fullPathStr))
+      history.Remove(n);
+}
+
+// backend for OnMRUFile
+// TODO: Would be nice to make this handle not opening a file with more panache.
+//  - Inform the user if DefaultOpenPath not set.
+//  - Switch focus to correct instance of project window, if already open.
+bool ProjectManager::MRUOpen(const FilePath &fullPathStr) {
+   // Most of the checks below are copied from ProjectManager::OpenFiles.
+   // - some rationalisation might be possible.
+
+   auto pProj = GetActiveProject().lock();
+   auto proj = pProj.get();
+
+   if (!fullPathStr.empty())
+   {
+      // verify that the file exists
+      if (wxFile::Exists(fullPathStr))
+      {
+         FileNames::UpdateDefaultPath(FileNames::Operation::Open, ::wxPathOnly(fullPathStr));
+
+         // Make sure it isn't already open.
+         // Test here even though AudacityProject::OpenFile() also now checks, because
+         // that method does not return the bad result.
+         // That itself may be a FIXME.
+         if (ProjectFileManager::IsAlreadyOpen(fullPathStr))
+            return false;
+
+         //! proj may be null
+         ( void ) ProjectManager::OpenProject( proj, fullPathStr,
+               true /* addtohistory */, false /* reuseNonemptyProject */ );
+      }
+      else {
+         // File doesn't exist - remove file from history
+         AudacityMessageBox(
+            XO(
+"%s could not be found.\n\nIt has been removed from the list of recent files.")
+               .Format(fullPathStr) );
+         return(false);
+      }
+   }
+   return(true);
+}
+
+bool ProjectManager::SafeMRUOpen(const wxString &fullPathStr)
+{
+   return GuardedCall< bool >( [&]{ return MRUOpen( fullPathStr ); } );
+}
+
+void ProjectManager::OnMRUClear(wxCommandEvent& WXUNUSED(event))
+{
+   FileHistory::Global().Clear();
+}
+
+void ProjectManager::FileHistoryMenus::UseMenu(wxMenu *menu)
+{
+   Compress();
+
+   auto end = mMenus.end();
+   auto iter = std::find(mMenus.begin(), end, menu);
+   auto found = (iter != end);
+
+   if (!found)
+      mMenus.push_back(menu);
+   else {
+      wxASSERT(false);
+   }
+
+   NotifyMenu( menu );
+}
+
+ProjectManager::FileHistoryMenus::FileHistoryMenus()
+{
+   mSubscription = FileHistory::Global()
+      .Subscribe(*this, &FileHistoryMenus::OnChangedHistory);
+}
+
+ProjectManager::FileHistoryMenus &ProjectManager::FileHistoryMenus::Instance()
+{
+   static FileHistoryMenus instance;
+   return instance;
+}
+
+void ProjectManager::FileHistoryMenus::OnChangedHistory(Observer::Message)
+{
+   Compress();
+   for (auto pMenu : mMenus)
+      if (pMenu)
+         NotifyMenu(pMenu);
+}
+
+void ProjectManager::FileHistoryMenus::NotifyMenu(wxMenu *menu)
+{
+   wxMenuItemList items = menu->GetMenuItems();
+   for (auto end = items.end(), iter = items.begin(); iter != end;)
+      menu->Destroy(*iter++);
+
+   const auto &history = FileHistory::Global();
+   int mIDBase = ID_RECENT_CLEAR;
+   int i = 0;
+   for (auto item : history) {
+      item.Replace( "&", "&&" );
+      auto id = mIDBase + 1 + i++;
+      menu->Append(id, item);
+      menu->Bind(wxEVT_MENU, ProjectManager::OnMRUFile, id);
+   }
+
+   if (history.size() > 0) {
+      menu->AppendSeparator();
+   }
+   menu->Append(mIDBase, _("&Clear"));
+   menu->Enable(mIDBase, history.size() > 0);
+   menu->Bind(wxEVT_MENU, ProjectManager::OnMRUClear, mIDBase);
+}
+
+void ProjectManager::FileHistoryMenus::Compress()
+{
+   // Clear up expired weak pointers
+   auto end = mMenus.end();
+   mMenus.erase(
+     std::remove_if( mMenus.begin(), end,
+        [](wxWeakRef<wxMenu> &pMenu){ return !pMenu; } ),
+     end
+   );
 }

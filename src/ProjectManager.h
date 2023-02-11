@@ -15,6 +15,7 @@ Paul Licameli split from AudacityProject.h
 
 #include <wx/event.h> // to inherit
 #include "ClientData.h" // to inherit
+#include "widgets/FileHistory.h"
 #include "Identifier.h"
 #include "Observer.h"
 
@@ -114,6 +115,45 @@ public:
    void SetSkipSavePrompt(bool bSkip) { sbSkipPromptingForSave = bSkip; };
 
    static void SetClosingAll(bool closing);
+
+   // Causes this menu to reflect the contents of the global FileHistory,
+   // now and also whenever the history changes.
+   static void UseMenu(wxMenu *menu);
+
+   // Most Recently Used File support (for all platforms).
+   static void OnMRUClear(wxCommandEvent &event);
+   static void OnMRUFile(wxCommandEvent &event);
+   // Backend for above - returns true for success, false for failure
+   static bool MRUOpen(const FilePath &fileName);
+   // A wrapper of the above that does not throw
+   static bool SafeMRUOpen(const wxString &fileName);
+
+private:
+   class FileHistoryMenus {
+   private:
+      FileHistoryMenus();
+
+   public:
+      static FileHistoryMenus &Instance();
+
+      // These constants define the range of IDs reserved by the global file history
+      enum {
+         ID_RECENT_CLEAR = 6100,
+         ID_RECENT_FIRST = 6101,
+      };
+
+      // Make the menu reflect the contents of the global FileHistory,
+      // now and also whenever the history changes.
+      void UseMenu(wxMenu *menu);
+      
+   private:
+      void OnChangedHistory(Observer::Message);
+      void NotifyMenu(wxMenu *menu);
+      std::vector< wxWeakRef< wxMenu > > mMenus;
+      Observer::Subscription mSubscription;
+
+      void Compress();
+   };
 
 private:
    void OnReconnectionFailure(ProjectFileIOMessage);
