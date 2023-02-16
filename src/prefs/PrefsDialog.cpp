@@ -34,7 +34,7 @@
 #include "AudioIOBase.h"
 #include "Prefs.h"
 #include "ProjectWindows.h"
-#include "../ShuttleGui.h"
+#include "ShuttleGui.h"
 #include "../commands/CommandManager.h"
 
 #include "PrefsPanel.h"
@@ -42,7 +42,7 @@
 #include "../widgets/HelpSystem.h"
 
 #if wxUSE_ACCESSIBILITY
-#include "../widgets/WindowAccessible.h"
+#include "WindowAccessible.h"
 #endif
 
 

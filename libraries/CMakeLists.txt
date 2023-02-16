@@ -35,6 +35,10 @@ set( LIBRARIES
    lib-realtime-effects
    lib-audio-io
    lib-wave-track
+   lib-command-parameters
+   lib-numeric-formats
+   lib-wx-wrappers
+   lib-shuttlegui
 )
 
 if ( ${_OPT}has_networking )

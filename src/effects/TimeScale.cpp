@@ -24,8 +24,8 @@
 #include <wx/slider.h>
 
 #include "MemoryX.h"
-#include "../ShuttleGui.h"
-#include "../widgets/valnum.h"
+#include "ShuttleGui.h"
+#include "valnum.h"
 
 enum
 {

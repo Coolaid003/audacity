@@ -25,10 +25,10 @@
 
 #include "ConfigInterface.h"
 #include "../LabelTrack.h"
-#include "../ProjectSettings.h"
+#include "ProjectNumericFormats.h"
 #include "../SelectFile.h"
-#include "../ShuttleAutomation.h"
-#include "../ShuttleGui.h"
+#include "ShuttleAutomation.h"
+#include "ShuttleGui.h"
 #include "../SyncLock.h"
 #include "ViewInfo.h"
 #include "WaveTrack.h"
@@ -460,7 +460,7 @@ const EffectSettingsManager& Effect::GetDefinition() const
 NumericFormatSymbol Effect::GetSelectionFormat()
 {
    if( !IsBatchProcessing() && FindProject() )
-      return ProjectSettings::Get( *FindProject() ).GetSelectionFormat();
+      return ProjectNumericFormats::Get( *FindProject() ).GetSelectionFormat();
    return NumericConverter::HoursMinsSecondsFormat();
 }
 

@@ -12,9 +12,9 @@
 #define __AUDACITY_EFFECT_AUTODUCK__
 
 #include "Effect.h"
-#include "../ShuttleAutomation.h"
+#include "ShuttleAutomation.h"
 #include <float.h> // for DBL_MAX
-#include "../widgets/wxPanelWrapper.h"
+#include "wxPanelWrapper.h"
 
 class wxBitmap;
 class wxTextCtrl;

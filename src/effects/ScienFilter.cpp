@@ -55,13 +55,13 @@ a graph for EffectScienFilter.
 #include "PlatformCompatibility.h"
 #include "Prefs.h"
 #include "Project.h"
-#include "../ShuttleGui.h"
+#include "ShuttleGui.h"
 #include "Theme.h"
 #include "WaveTrack.h"
-#include "../widgets/valnum.h"
+#include "valnum.h"
 #include "../widgets/AudacityMessageBox.h"
 #include "../widgets/Ruler.h"
-#include "../widgets/WindowAccessible.h"
+#include "WindowAccessible.h"
 
 #if !defined(M_PI)
 #define PI = 3.1415926535897932384626433832795

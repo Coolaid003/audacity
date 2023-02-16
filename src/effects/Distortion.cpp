@@ -40,8 +40,8 @@
 #include <wx/stattext.h>
 
 #include "Prefs.h"
-#include "../ShuttleGui.h"
-#include "../widgets/valnum.h"
+#include "ShuttleGui.h"
+#include "valnum.h"
 
 const EnumValueSymbol EffectDistortion::kTableTypeStrings[nTableTypes] =
 {

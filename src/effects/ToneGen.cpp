@@ -29,8 +29,8 @@ frequency changes smoothly during the tone.
 
 #include "Project.h"
 #include "ProjectRate.h"
-#include "../ShuttleGui.h"
-#include "../widgets/valnum.h"
+#include "ShuttleGui.h"
+#include "valnum.h"
 #include "../widgets/NumericTextCtrl.h"
 
 const EnumValueSymbol EffectToneGen::kInterStrings[nInterpolations] =

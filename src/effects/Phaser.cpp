@@ -27,8 +27,8 @@
 
 #include <wx/slider.h>
 
-#include "../ShuttleGui.h"
-#include "../widgets/valnum.h"
+#include "ShuttleGui.h"
+#include "valnum.h"
 
 const EffectParameterMethods& EffectPhaser::Parameters() const
 {

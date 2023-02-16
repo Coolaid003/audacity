@@ -18,8 +18,8 @@ Vaughan Johnson (Preview)
 #include "Biquad.h"
 
 #include "StatefulPerTrackEffect.h"
-#include "../ShuttleAutomation.h"
-#include "../widgets/wxPanelWrapper.h"
+#include "ShuttleAutomation.h"
+#include "wxPanelWrapper.h"
 #include <float.h> // for FLT_MAX
 
 class wxBitmap;

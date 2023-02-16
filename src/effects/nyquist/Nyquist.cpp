@@ -61,15 +61,15 @@ effects from this one class.
 #include "PluginManager.h"
 #include "Project.h"
 #include "ProjectRate.h"
-#include "../../ShuttleAutomation.h"
+#include "ShuttleAutomation.h"
 #include "../../ShuttleGetDefinition.h"
-#include "../../ShuttleGui.h"
+#include "ShuttleGui.h"
 #include "TempDirectory.h"
 #include "SyncLock.h"
 #include "ViewInfo.h"
 #include "WaveClip.h"
 #include "WaveTrack.h"
-#include "../../widgets/valnum.h"
+#include "valnum.h"
 #include "../../widgets/AudacityMessageBox.h"
 #include "Prefs.h"
 #include "wxFileNameWrapper.h"
@@ -79,7 +79,7 @@ effects from this one class.
 #include "../../widgets/NumericTextCtrl.h"
 #include "../../widgets/ProgressDialog.h"
 
-#include "../../widgets/FileDialog/FileDialog.h"
+#include "FileDialog/FileDialog.h"
 
 #ifndef nyx_returns_start_and_end_time
 #error You need to update lib-src/libnyquist

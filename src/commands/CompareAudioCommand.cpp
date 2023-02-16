@@ -31,10 +31,10 @@ threshold of difference in two selected tracks
 
 #include <float.h>
 
-#include "../Shuttle.h"
-#include "../ShuttleGui.h"
+#include "SettingsVisitor.h"
+#include "ShuttleGui.h"
 #include "../widgets/AudacityMessageBox.h"
-#include "../widgets/valnum.h"
+#include "valnum.h"
 #include "CommandContext.h"
 
 const ComponentInterfaceSymbol CompareAudioCommand::Symbol

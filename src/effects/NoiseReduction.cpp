@@ -43,7 +43,7 @@
 #include "EffectManager.h"
 #include "EffectUI.h"
 
-#include "../ShuttleGui.h"
+#include "ShuttleGui.h"
 #include "../widgets/HelpSystem.h"
 #include "FFT.h"
 #include "Prefs.h"
@@ -52,7 +52,7 @@
 
 #include "WaveTrack.h"
 #include "../widgets/AudacityMessageBox.h"
-#include "../widgets/valnum.h"
+#include "valnum.h"
 
 #include <algorithm>
 #include <vector>

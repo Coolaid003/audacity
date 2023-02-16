@@ -82,15 +82,15 @@
 #include "FileNames.h"
 #include "PlatformCompatibility.h"
 #include "../../SelectFile.h"
-#include "../../ShuttleGui.h"
-#include "../../widgets/valnum.h"
+#include "ShuttleGui.h"
+#include "valnum.h"
 #include "../../widgets/AudacityMessageBox.h"
 #include "../../widgets/NumericTextCtrl.h"
 #include "XMLFileReader.h"
 #include "Base64.h"
 
 #if wxUSE_ACCESSIBILITY
-#include "../../widgets/WindowAccessible.h"
+#include "WindowAccessible.h"
 #endif
 
 #include "ConfigInterface.h"

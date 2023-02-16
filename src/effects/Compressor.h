@@ -12,9 +12,9 @@
 #define __AUDACITY_EFFECT_COMPRESSOR__
 
 #include "TwoPassSimpleMono.h"
-#include "../ShuttleAutomation.h"
+#include "ShuttleAutomation.h"
 #include "MemoryX.h"
-#include "../widgets/wxPanelWrapper.h"
+#include "wxPanelWrapper.h"
 
 class wxCheckBox;
 class wxSlider;
