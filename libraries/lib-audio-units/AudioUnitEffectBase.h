@@ -2,53 +2,57 @@
 
   Audacity: A Digital Audio Editor
 
-  @file AudioUnitEffect.h
+  @file AudioUnitEffectBase.h
 
   Dominic Mazzoni
   Leland Lucius
 
+  Paul Licameli split from AudioUnitEffect.h
+
 **********************************************************************/
-#ifndef AUDACITY_AUDIOUNIT_EFFECT_H
-#define AUDACITY_AUDIOUNIT_EFFECT_H
-
-
+#ifndef AUDACITY_AUDIOUNIT_EFFECT_BASE_H
+#define AUDACITY_AUDIOUNIT_EFFECT_BASE_H
 
 #if USE_AUDIO_UNITS
 
 #include "AudioUnitWrapper.h"
+#include "GlobalVariable.h"
+#include "PerTrackEffect.h"
 
-#include "MemoryX.h"
-#include <functional>
-#include <type_traits>
-#include <vector>
-
-#include <AudioToolbox/AudioUnitUtilities.h>
-#include <AudioUnit/AudioUnitProperties.h>
-
-#include "../StatelessPerTrackEffect.h"
-#include "PluginInterface.h"
-
-#include <wx/weakref.h>
+constexpr auto OptionsKey = L"Options";
+constexpr auto UseLatencyKey = L"UseLatency";
 
 #define AUDIOUNITEFFECTS_VERSION wxT("1.0.0.0")
 /* i18n-hint: the name of an Apple audio software protocol */
 #define AUDIOUNITEFFECTS_FAMILY EffectFamilySymbol{ wxT("AudioUnit"), XO("Audio Unit") }
-class AudioUnitEffect;
 
-class AUControl;
-
-class AudioUnitEffect final
-   : public StatelessPerTrackEffect
-   , AudioUnitWrapper
+class AudioUnitEffectBase
+   : public PerTrackEffect
+   , public AudioUnitWrapper
 {
 public:
+   using FactoryType =
+      std::unique_ptr<AudioUnitEffectBase>(const PluginPath & path,
+         const wxString & name, AudioComponent component);
+
+   static std::unique_ptr<AudioUnitEffectBase>
+      DefaultEffectFactory(const PluginPath & path,
+         const wxString & name, AudioComponent component);
+
+   //! Global hook making AudioIOStartStreamOptions for a project, which
+   //! has a non-trivial default implementation
+   struct Factory : GlobalFactoryHook< Factory,
+      FactoryType,
+      DefaultEffectFactory // default installed implementation
+   >{};
+
    using Parameters = PackedArray::Ptr<const AudioUnitParameterID>;
 
-   AudioUnitEffect(const PluginPath & path,
+   AudioUnitEffectBase(const PluginPath & path,
       const wxString & name, AudioComponent component,
       Parameters *pParameters = nullptr,
-      AudioUnitEffect *master = nullptr);
-   virtual ~AudioUnitEffect();
+      AudioUnitEffectBase *master = nullptr);
+   ~AudioUnitEffectBase() override;
 
    // ComponentInterface implementation
 
@@ -86,31 +90,16 @@ public:
    OptionalMessage LoadFactoryPreset(int id, EffectSettings &settings)
       const override;
 
-   int ShowClientInterface(const EffectPlugin &plugin, wxWindow &parent,
-      wxDialog &dialog, EffectEditor *pEditor, bool forceModal)
-   const override;
-
    bool InitializePlugin();
 
    std::shared_ptr<EffectInstance> MakeInstance() const override;
-   std::unique_ptr<EffectEditor> PopulateUI(const EffectPlugin &plugin,
-      ShuttleGui &S, EffectInstance &instance, EffectSettingsAccess &access,
-      const EffectOutputs *pOutputs) const override;
-   bool CloseUI() const override;
 
    bool CanExportPresets() const override;
-   void ExportPresets(
-      const EffectPlugin &plugin, const EffectSettings &settings)
-   const override;
-   OptionalMessage ImportPresets(
-      const EffectPlugin &plugin, EffectSettings &settings) const override;
 
    bool HasOptions() const override;
-   void ShowOptions(const EffectPlugin &plugin) const override;
 
    // AudioUnitEffect implementation
 
-private:
    static RegistryPath ChoosePresetKey(const EffectSettings &settings);
    static RegistryPath FindPresetKey(const CommandParameters & parms);
 
@@ -139,12 +128,7 @@ private:
    bool CreatePlain(wxWindow *parent);
 #endif
 
-private:
-   //! Will never be called
-   virtual std::unique_ptr<EffectEditor> MakeEditor(
-      ShuttleGui & S, EffectInstance &instance, EffectSettingsAccess &access,
-      const EffectOutputs *pOutputs) const final;
-
+protected:
    const PluginPath mPath;
    const wxString mName;
    const wxString mVendor;

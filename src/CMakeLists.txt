@@ -143,12 +143,6 @@ list( APPEND SOURCES
       HitTestResult.h
       IncompatiblePluginsDialog.cpp
       IncompatiblePluginsDialog.h
-      JournalEvents.cpp
-      JournalEvents.h
-      JournalWindowPaths.cpp
-      JournalWindowPaths.h
-      KeyboardCapture.cpp
-      KeyboardCapture.h
       LabelDialog.cpp
       LabelDialog.h
       LabelTrack.cpp
@@ -353,8 +347,6 @@ list( APPEND SOURCES
       effects/AnalysisTracks.h
       effects/AutoDuck.cpp
       effects/AutoDuck.h
-      effects/BasicEffectUIServices.cpp
-      effects/BasicEffectUIServices.h
       effects/BassTreble.cpp
       effects/BassTreble.h
       effects/Biquad.cpp
@@ -379,14 +371,10 @@ list( APPEND SOURCES
       effects/EBUR128.h
       effects/Echo.cpp
       effects/Echo.h
-      effects/EffectEditor.cpp
-      effects/EffectEditor.h
       effects/EffectManager.cpp
       effects/EffectManager.h
       effects/EffectUI.cpp
       effects/EffectUI.h
-      effects/EffectUIServices.cpp
-      effects/EffectUIServices.h
       effects/Equalization.cpp
       effects/Equalization.h
       effects/Equalization48x.cpp
@@ -452,14 +440,6 @@ list( APPEND SOURCES
       effects/SimpleMono.h
       effects/SoundTouchEffect.cpp
       effects/SoundTouchEffect.h
-      effects/StatefulEffect.cpp
-      effects/StatefulEffect.h
-      effects/StatefulEffectUIServices.cpp
-      effects/StatefulEffectUIServices.h
-      effects/StatefulPerTrackEffect.cpp
-      effects/StatefulPerTrackEffect.h
-      effects/StatelessPerTrackEffect.cpp
-      effects/StatelessPerTrackEffect.h
       effects/StereoToMono.cpp
       effects/StereoToMono.h
       effects/TimeScale.cpp
@@ -538,27 +518,6 @@ list( APPEND SOURCES
       >
       $<$<AND:$<BOOL:${${_OPT}has_vst3}>,$<BOOL:${wxIS_MAC}>>:
          effects/VST3/module_mac.mm
-      >
-
-      # Audio Unit Effects
-
-      $<$<AND:$<BOOL:${USE_AUDIO_UNITS}>,$<BOOL:${wxIS_MAC}>>:
-         effects/audiounits/AUControl.h
-         effects/audiounits/AUControl.mm
-         effects/audiounits/AudioUnitEditor.cpp
-         effects/audiounits/AudioUnitEditor.h
-         effects/audiounits/AudioUnitEffect.cpp
-         effects/audiounits/AudioUnitEffect.h
-         effects/audiounits/AudioUnitEffectOptionsDialog.cpp
-         effects/audiounits/AudioUnitEffectOptionsDialog.h
-         effects/audiounits/AudioUnitEffectsModule.cpp
-         effects/audiounits/AudioUnitEffectsModule.h
-         effects/audiounits/AudioUnitInstance.cpp
-         effects/audiounits/AudioUnitInstance.h
-         effects/audiounits/AudioUnitUtils.cpp
-         effects/audiounits/AudioUnitUtils.h
-         effects/audiounits/AudioUnitWrapper.cpp
-         effects/audiounits/AudioUnitWrapper.h
       >
 
       # Ladspa Effects
@@ -984,8 +943,6 @@ list( APPEND SOURCES
       widgets/AttachableScrollBar.h
       widgets/BackedPanel.cpp
       widgets/BackedPanel.h
-      widgets/BasicMenu.cpp
-      widgets/BasicMenu.h
       widgets/CustomUpdater.cpp
       widgets/CustomUpdater.h
       widgets/CustomUpdaterPosition.cpp
@@ -1020,8 +977,6 @@ list( APPEND SOURCES
       widgets/MeterPanelBase.h
       widgets/MissingPluginsErrorDialog.cpp
       widgets/MissingPluginsErrorDialog.h
-      widgets/NumericTextCtrl.cpp
-      widgets/NumericTextCtrl.h
       widgets/Overlay.cpp
       widgets/Overlay.h
       widgets/OverlayPanel.cpp
@@ -1046,15 +1001,8 @@ list( APPEND SOURCES
       widgets/TimeFormat.h
       widgets/UnwritableLocationErrorDialog.cpp
       widgets/UnwritableLocationErrorDialog.h
-      widgets/VetoDialogHook.h
       widgets/Warning.cpp
       widgets/Warning.h
-      widgets/auStaticText.cpp
-      widgets/auStaticText.h
-      widgets/numformatter.cpp
-      widgets/numformatter.h
-      widgets/valnum.cpp
-      widgets/valnum.h
 
       # Update version
       $<$<BOOL:${${_OPT}has_updates_check}>:
@@ -1325,10 +1273,8 @@ elseif( CMAKE_SYSTEM_NAME MATCHES "Darwin" )
    # from precompiled header usage
    set_source_files_properties(
       AudacityApp.mm
-      KeyboardCapture.cpp
       effects/EffectUI.cpp
       effects/VST/VSTControlOSX.mm
-      effects/audiounits/AUControl.mm
       widgets/FileDialog/mac/FileDialogPrivate.mm
       PROPERTIES
          COMPILE_FLAGS "-x objective-c++"
@@ -1352,7 +1298,6 @@ elseif( CMAKE_SYSTEM_NAME MATCHES "Darwin" )
    # Add our required frameworks
    list( APPEND LIBRARIES
       PRIVATE
-         "-framework AudioUnit"
          "-framework CoreAudio"
          "-framework CoreAudioKit"
    )
@@ -1504,8 +1449,8 @@ set( AUDACITY_LIBRARIES
    lib-graphics-interface
    lib-tags-interface
    lib-project-file-io-interface
-   lib-effects-interface
    lib-wx-init-interface
+   lib-wx-effects-interface
 )
 
 if (${_OPT}use_ffmpeg)

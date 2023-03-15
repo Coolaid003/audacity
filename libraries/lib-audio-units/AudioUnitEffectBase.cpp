@@ -2,51 +2,27 @@
 
   Audacity: A Digital Audio Editor
 
-  @file AudioUnitEffect.cpp
+  @file AudioUnitEffectBase.cpp
 
   Dominic Mazzoni
   Leland Lucius
 
+  Paul Licameli split from AudioUnitEffect
+
 *******************************************************************//**
 
-\class AudioUnitEffect
+\class AudioUnitEffectBase
 \brief An Effect class that handles a wide range of effects.  ??Mac only??
 
 *//*******************************************************************/
 
 #if USE_AUDIO_UNITS
-#include "AudioUnitEffect.h"
-#include "AudioUnitEffectOptionsDialog.h"
+#include "AudioUnitEffectBase.h"
 #include "AudioUnitInstance.h"
-#include "AudioUnitEditor.h"
-#include "SampleCount.h"
 #include "ConfigInterface.h"
 
-#include <optional>
-#include <wx/defs.h>
-#include <wx/base64.h>
-#include <wx/control.h>
-#include <wx/crt.h>
-#include <wx/dir.h>
 #include <wx/ffile.h>
-
-#ifdef __WXMAC__
-#include <wx/evtloop.h>
-#endif
-
-#include <wx/filename.h>
-#include <wx/frame.h>
-#include <wx/listctrl.h>
-#include <wx/log.h>
-#include <wx/settings.h>
-#include <wx/stattext.h>
-#include <wx/textctrl.h>
 #include <wx/osx/core/private.h>
-
-#include "SelectFile.h"
-#include "ShuttleGui.h"
-#include "AudacityMessageBox.h"
-#include "../../widgets/valnum.h"
 
 //
 // When a plug-in's state is saved to the settings file (as a preset),
@@ -70,7 +46,7 @@
 #define PRESET_LOCAL_PATH wxT("/Library/Audio/Presets")
 #define PRESET_USER_PATH wxT("~/Library/Audio/Presets")
 
-TranslatableString AudioUnitEffect::SaveBlobToConfig(
+TranslatableString AudioUnitEffectBase::SaveBlobToConfig(
    const RegistryPath &group, const wxString &path,
    const void *blob, size_t len, bool allowEmpty) const
 {
@@ -91,9 +67,16 @@ TranslatableString AudioUnitEffect::SaveBlobToConfig(
 //
 ///////////////////////////////////////////////////////////////////////////////
 
-AudioUnitEffect::AudioUnitEffect(const PluginPath & path,
+std::unique_ptr<AudioUnitEffectBase>
+   AudioUnitEffectBase::DefaultEffectFactory(const PluginPath & path,
+      const wxString & name, AudioComponent component)
+{
+   return std::make_unique<AudioUnitEffectBase>(path, name, component);
+}
+
+AudioUnitEffectBase::AudioUnitEffectBase(const PluginPath & path,
    const wxString & name, AudioComponent component,
-   Parameters *pParameters, AudioUnitEffect *master
+   Parameters *pParameters, AudioUnitEffectBase *master
 )  : AudioUnitWrapper{ component, pParameters }
    , mPath{ path }
    , mName{ name.AfterFirst(wxT(':')).Trim(true).Trim(false) }
@@ -101,30 +84,28 @@ AudioUnitEffect::AudioUnitEffect(const PluginPath & path,
 {
 }
 
-AudioUnitEffect::~AudioUnitEffect()
-{
-}
+AudioUnitEffectBase::~AudioUnitEffectBase() = default;
 
 // ============================================================================
 // ComponentInterface implementation
 // ============================================================================
 
-PluginPath AudioUnitEffect::GetPath() const
+PluginPath AudioUnitEffectBase::GetPath() const
 {
    return mPath;
 }
 
-ComponentInterfaceSymbol AudioUnitEffect::GetSymbol() const
+ComponentInterfaceSymbol AudioUnitEffectBase::GetSymbol() const
 {
    return mName;
 }
 
-VendorSymbol AudioUnitEffect::GetVendor() const
+VendorSymbol AudioUnitEffectBase::GetVendor() const
 {
    return { mVendor };
 }
 
-wxString AudioUnitEffect::GetVersion() const
+wxString AudioUnitEffectBase::GetVersion() const
 {
    UInt32 version;
 
@@ -136,7 +117,7 @@ wxString AudioUnitEffect::GetVersion() const
                            version & 0xff);
 }
 
-TranslatableString AudioUnitEffect::GetDescription() const
+TranslatableString AudioUnitEffectBase::GetDescription() const
 {
    /* i18n-hint: Can mean "not available," "not applicable," "no answer" */
    return XO("n/a");
@@ -146,7 +127,7 @@ TranslatableString AudioUnitEffect::GetDescription() const
 // EffectDefinitionInterface implementation
 // ============================================================================
 
-EffectType AudioUnitEffect::GetType() const
+EffectType AudioUnitEffectBase::GetType() const
 {
    if (mAudioIns == 0 && mAudioOuts == 0)
    {
@@ -166,29 +147,29 @@ EffectType AudioUnitEffect::GetType() const
    return EffectTypeProcess;
 }
 
-EffectFamilySymbol AudioUnitEffect::GetFamily() const
+EffectFamilySymbol AudioUnitEffectBase::GetFamily() const
 {
    return AUDIOUNITEFFECTS_FAMILY;
 }
 
-bool AudioUnitEffect::IsInteractive() const
+bool AudioUnitEffectBase::IsInteractive() const
 {
    return mInteractive;
 }
 
-bool AudioUnitEffect::IsDefault() const
+bool AudioUnitEffectBase::IsDefault() const
 {
    return false;
 }
 
-auto AudioUnitEffect::RealtimeSupport() const -> RealtimeSince
+auto AudioUnitEffectBase::RealtimeSupport() const -> RealtimeSince
 {
    return GetType() == EffectTypeProcess
       ? RealtimeSince::After_3_1
       : RealtimeSince::Never;
 }
 
-bool AudioUnitEffect::SupportsAutomation() const
+bool AudioUnitEffectBase::SupportsAutomation() const
 {
    bool supports = false;
    ForEachParameter(
@@ -201,7 +182,7 @@ bool AudioUnitEffect::SupportsAutomation() const
    return supports;
 }
 
-std::shared_ptr<EffectInstance> AudioUnitEffect::MakeInstance() const
+std::shared_ptr<EffectInstance> AudioUnitEffectBase::MakeInstance() const
 {
    bool useLatency;
    GetConfig(*this, PluginSettings::Shared, OptionsKey, UseLatencyKey,
@@ -211,7 +192,7 @@ std::shared_ptr<EffectInstance> AudioUnitEffect::MakeInstance() const
       GetSymbol().Internal(), mAudioIns, mAudioOuts, useLatency);
 }
 
-bool AudioUnitEffect::InitializePlugin()
+bool AudioUnitEffectBase::InitializePlugin()
 {
    // To implement the services of EffectPlugin -- such as, a query of the
    // set of effect parameters, so that we can implement MakeSettings -- we
@@ -263,27 +244,16 @@ size_t AudioUnitInstance::GetTailSize() const
 }
 #endif
 
-int AudioUnitEffect::ShowClientInterface(const EffectPlugin &,
-   wxWindow &parent, wxDialog &dialog,
-   EffectEditor *, bool forceModal) const
-{
-   if ((SupportsRealtime() || GetType() == EffectTypeAnalyze) && !forceModal) {
-      dialog.Show();
-      return 0;
-   }
-   return dialog.ShowModal();
-}
-
 // Don't use the template-generated MakeSettings(), which default-constructs
 // the structure.  Instead allocate a number of values chosen by the plug-in
-EffectSettings AudioUnitEffect::MakeSettings() const
+EffectSettings AudioUnitEffectBase::MakeSettings() const
 {
    AudioUnitEffectSettings settings;
    FetchSettings(settings, true);
    return EffectSettings::Make<AudioUnitEffectSettings>(std::move(settings));
 }
 
-bool AudioUnitEffect::CopySettingsContents(
+bool AudioUnitEffectBase::CopySettingsContents(
    const EffectSettings &, EffectSettings &) const
 {
    // Not needed -- rely on EffectInstance::Message instead
@@ -292,7 +262,7 @@ bool AudioUnitEffect::CopySettingsContents(
 
 constexpr auto PresetStr = "_PRESET";
 
-RegistryPath AudioUnitEffect::ChoosePresetKey(
+RegistryPath AudioUnitEffectBase::ChoosePresetKey(
    const EffectSettings &settings)
 {
    // Find a key to use for the preset that does not collide with any
@@ -310,7 +280,7 @@ RegistryPath AudioUnitEffect::ChoosePresetKey(
    return result;
 }
 
-RegistryPath AudioUnitEffect::FindPresetKey(const CommandParameters & parms)
+RegistryPath AudioUnitEffectBase::FindPresetKey(const CommandParameters & parms)
 {
    RegistryPath result;
    auto len = strlen(PresetStr);
@@ -325,7 +295,7 @@ RegistryPath AudioUnitEffect::FindPresetKey(const CommandParameters & parms)
    return result;
 }
 
-bool AudioUnitEffect::SaveSettings(
+bool AudioUnitEffectBase::SaveSettings(
    const EffectSettings &settings, CommandParameters & parms) const
 {
    const auto &mySettings = GetSettings(settings);
@@ -343,7 +313,7 @@ bool AudioUnitEffect::SaveSettings(
    return true;
 }
 
-bool AudioUnitEffect::LoadSettings(
+bool AudioUnitEffectBase::LoadSettings(
    const CommandParameters & parms, EffectSettings &settings) const
 {
    // First clean all settings, in case any are not defined in parms
@@ -372,28 +342,28 @@ bool AudioUnitEffect::LoadSettings(
    return true;
 }
 
-OptionalMessage AudioUnitEffect::LoadUserPreset(
+OptionalMessage AudioUnitEffectBase::LoadUserPreset(
    const RegistryPath & name, EffectSettings &settings) const
 {
    // To do: externalize state so const_cast isn't needed
-   return const_cast<AudioUnitEffect*>(this)->LoadPreset(name, settings);
+   return const_cast<AudioUnitEffectBase*>(this)->LoadPreset(name, settings);
 }
 
-bool AudioUnitEffect::SaveUserPreset(
+bool AudioUnitEffectBase::SaveUserPreset(
    const RegistryPath & name, const EffectSettings &settings) const
 {
    return SavePreset(name, GetSettings(settings));
 }
 
 OptionalMessage
-AudioUnitEffect::LoadFactoryPreset(int id, EffectSettings &settings) const
+AudioUnitEffectBase::LoadFactoryPreset(int id, EffectSettings &settings) const
 {
    if (AudioUnitWrapper::LoadFactoryPreset(*this, id, &settings))
       return { nullptr };
    return {};
 }
 
-RegistryPaths AudioUnitEffect::GetFactoryPresets() const
+RegistryPaths AudioUnitEffectBase::GetFactoryPresets() const
 {
    RegistryPaths presets;
 
@@ -407,148 +377,21 @@ RegistryPaths AudioUnitEffect::GetFactoryPresets() const
    return presets;
 }
 
-std::unique_ptr<EffectEditor> AudioUnitEffect::PopulateUI(
-   const EffectPlugin &, ShuttleGui &S,
-   EffectInstance &instance, EffectSettingsAccess &access,
-   const EffectOutputs *) const
-{
-   wxString uiType;
-   // Decide whether to build plain or fancy user interfaces
-   GetConfig(*this, PluginSettings::Shared, OptionsKey, UITypeKey,
-      uiType, FullValue.MSGID().GET() /* Config stores un-localized string */);
-   return AudioUnitEditor::Create(*this, S, uiType, instance, access);
-}
-
-std::unique_ptr<EffectEditor> AudioUnitEffect::MakeEditor(
-   ShuttleGui &, EffectInstance &, EffectSettingsAccess &,
-   const EffectOutputs *) const
-{
-   //! Will not come here because Effect::PopulateUI is overridden
-   assert(false);
-   return nullptr;
-}
-
-#if defined(HAVE_AUDIOUNIT_BASIC_SUPPORT)
-bool AudioUnitEffect::CreatePlain(wxWindow *parent)
-{
-   // TODO???  Never implemented...
-   return false;
-}
-#endif
-
-bool AudioUnitEffect::CloseUI() const
-{
-#ifdef __WXMAC__
-#ifdef __WX_EVTLOOP_BUSY_WAITING__
-   wxEventLoop::SetBusyWaiting(false);
-#endif
-#endif
-   return true;
-}
-
-bool AudioUnitEffect::CanExportPresets() const
+bool AudioUnitEffectBase::CanExportPresets() const
 {
    return true;
 }
 
-void AudioUnitEffect::ExportPresets(
-   const EffectPlugin &, const EffectSettings &settings) const
-{
-   // Generate the user domain path
-   wxFileName fn;
-   fn.SetPath(PRESET_USER_PATH);
-   fn.AppendDir(mVendor);
-   fn.AppendDir(mName);
-   fn.Normalize();
-   FilePath path = fn.GetFullPath();
-
-   if (!fn.Mkdir(fn.GetFullPath(), 0755, wxPATH_MKDIR_FULL)) {
-      wxLogError(wxT("Couldn't create the \"%s\" directory"), fn.GetPath());
-      return;
-   }
-
-   // Ask the user for the name to use
-   //
-   // Passing a valid parent will cause some effects dialogs to malfunction
-   // upon returning from the SelectFile().
-   path = SelectFile(FileNames::Operation::_None,
-      XO("Export Audio Unit Preset As %s:").Format(fn.GetFullPath()),
-      fn.GetFullPath(),
-      wxEmptyString,
-      wxT("aupreset"),
-      {
-        { XO("Standard Audio Unit preset file"), { wxT("aupreset") }, true },
-      },
-      wxFD_SAVE | wxFD_OVERWRITE_PROMPT | wxRESIZE_BORDER,
-      NULL);
-
-   // User canceled...
-   if (path.empty())
-      return;
-
-   auto msg = Export(GetSettings(settings), path);
-   if (!msg.empty())
-      AudacityMessageBox(
-         XO("Could not export \"%s\" preset\n\n%s").Format(path, msg),
-         XO("Export Audio Unit Presets"),
-         wxOK | wxCENTRE);
-}
-
-OptionalMessage AudioUnitEffect::ImportPresets(
-   const EffectPlugin &, EffectSettings &settings) const
-{
-   // Generate the user domain path
-   wxFileName fn;
-   fn.SetPath(PRESET_USER_PATH);
-   fn.AppendDir(mVendor);
-   fn.AppendDir(mName);
-   fn.Normalize();
-   FilePath path = fn.GetFullPath();
-
-   // Ask the user for the name to use
-   //
-   // Passing a valid parent will cause some effects dialogs to malfunction
-   // upon returning from the SelectFile().
-   path = SelectFile(FileNames::Operation::_None,
-      XO("Import Audio Unit Preset As %s:").Format(fn.GetFullPath()),
-      fn.GetFullPath(), wxEmptyString, wxT("aupreset"),
-      {
-        { XO("Standard Audio Unit preset file"), { wxT("aupreset") }, true },
-      },
-      wxFD_OPEN | wxRESIZE_BORDER,
-      nullptr);
-
-   // User canceled...
-   if (path.empty())
-      return {};
-
-   auto msg = Import(GetSettings(settings), path);
-   if (!msg.empty()) {
-      AudacityMessageBox(
-         XO("Could not import \"%s\" preset\n\n%s").Format(path, msg),
-         XO("Import Audio Unit Presets"),
-         wxOK | wxCENTRE);
-      return {};
-   }
-
-   return { nullptr };
-}
-
-bool AudioUnitEffect::HasOptions() const
+bool AudioUnitEffectBase::HasOptions() const
 {
    return true;
-}
-
-void AudioUnitEffect::ShowOptions(const EffectPlugin &) const
-{
-   AudioUnitEffectOptionsDialog{ *this }.ShowModal();
 }
 
 // ============================================================================
 // AudioUnitEffect Implementation
 // ============================================================================
 
-bool AudioUnitEffect::MigrateOldConfigFile(
+bool AudioUnitEffectBase::MigrateOldConfigFile(
    const RegistryPath & group, EffectSettings &settings) const
 {
    // Migration of very old format configuration file, should not normally
@@ -568,7 +411,7 @@ bool AudioUnitEffect::MigrateOldConfigFile(
    return false;
 }
 
-OptionalMessage AudioUnitEffect::LoadPreset(
+OptionalMessage AudioUnitEffectBase::LoadPreset(
    const RegistryPath & group, EffectSettings &settings) const
 {
    if (MigrateOldConfigFile(group, settings))
@@ -579,7 +422,7 @@ OptionalMessage AudioUnitEffect::LoadPreset(
    return {};
 }
 
-bool AudioUnitEffect::SavePreset(
+bool AudioUnitEffectBase::SavePreset(
    const RegistryPath & group, const AudioUnitEffectSettings &settings) const
 {
    wxCFStringRef cfname(wxFileNameFromPath(group));
@@ -597,7 +440,7 @@ bool AudioUnitEffect::SavePreset(
    return true;
 }
 
-TranslatableString AudioUnitEffect::Export(
+TranslatableString AudioUnitEffectBase::Export(
    const AudioUnitEffectSettings &settings, const wxString & path) const
 {
    // Create the file
@@ -621,7 +464,7 @@ TranslatableString AudioUnitEffect::Export(
    return {};
 }
 
-TranslatableString AudioUnitEffect::Import(
+TranslatableString AudioUnitEffectBase::Import(
    AudioUnitEffectSettings &settings, const wxString & path) const
 {
    // Open the preset
@@ -643,7 +486,7 @@ TranslatableString AudioUnitEffect::Import(
    return {};
 }
 
-void AudioUnitEffect::GetChannelCounts()
+void AudioUnitEffectBase::GetChannelCounts()
 {
    // Does AU have channel info
    PackedArray::Ptr<AUChannelInfo> info;

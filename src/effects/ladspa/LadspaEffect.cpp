@@ -24,7 +24,7 @@ effects from this one class.
 
 
 #include "LadspaEffect.h"       // This class's header file
-#include "../EffectEditor.h"
+#include "EffectEditor.h"
 #include "SampleCount.h"
 #include "ConfigInterface.h"
 
@@ -58,8 +58,8 @@ effects from this one class.
 #include "AudacityException.h"
 #include "FileNames.h"
 #include "ShuttleGui.h"
-#include "../../widgets/NumericTextCtrl.h"
-#include "../../widgets/valnum.h"
+#include "NumericTextCtrl.h"
+#include "valnum.h"
 #include "wxPanelWrapper.h"
 #include "ModuleManager.h"
 

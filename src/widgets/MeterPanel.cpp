@@ -57,7 +57,7 @@
 
 #include "AudioIO.h"
 #include "AColor.h"
-#include "../widgets/BasicMenu.h"
+#include "BasicMenu.h"
 #include "ImageManipulation.h"
 #include "Decibels.h"
 #include "LinearUpdater.h"
@@ -74,7 +74,7 @@
 #include "../widgets/RealFormat.h"
 
 #include "AllThemeResources.h"
-#include "../widgets/valnum.h"
+#include "valnum.h"
 
 #if wxUSE_ACCESSIBILITY
 #include "WindowAccessible.h"

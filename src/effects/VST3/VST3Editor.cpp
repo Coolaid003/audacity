@@ -5,9 +5,9 @@
 #include "VST3ParametersWindow.h"
 #include "VST3Utils.h"
 #include "VST3Wrapper.h"
-#include "effects/StatelessPerTrackEffect.h"
+#include "StatelessPerTrackEffect.h"
 #include "internal/PlugFrame.h"
-#include "widgets/NumericTextCtrl.h"
+#include "NumericTextCtrl.h"
 
 #ifdef __WXGTK__
 #include "internal/x11/SocketWindow.h"

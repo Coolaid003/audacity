@@ -22,7 +22,7 @@
 #endif
 
 #include "LV2Editor.h"
-#include "effects/StatelessPerTrackEffect.h"
+#include "StatelessPerTrackEffect.h"
 #include "LV2EffectMeter.h"
 #include "LV2Instance.h"
 #include "LV2Wrapper.h"
@@ -40,9 +40,9 @@
 
 #include <wx/scrolwin.h>
 
-#include "../../widgets/valnum.h"
+#include "valnum.h"
 
-#include "../../widgets/NumericTextCtrl.h"
+#include "NumericTextCtrl.h"
 
 #if defined(__WXGTK__)
 #include <gtk/gtk.h>

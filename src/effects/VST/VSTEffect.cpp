@@ -83,9 +83,9 @@
 #include "PlatformCompatibility.h"
 #include "SelectFile.h"
 #include "ShuttleGui.h"
-#include "../../widgets/valnum.h"
+#include "valnum.h"
 #include "AudacityMessageBox.h"
-#include "../../widgets/NumericTextCtrl.h"
+#include "NumericTextCtrl.h"
 #include "XMLFileReader.h"
 #include "Base64.h"
 

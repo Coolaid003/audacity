@@ -30,8 +30,8 @@
 #include "SyncLock.h"
 #include "WaveTrack.h"
 #include "WaveClip.h"
-#include "../widgets/NumericTextCtrl.h"
-#include "../widgets/valnum.h"
+#include "NumericTextCtrl.h"
+#include "valnum.h"
 
 #include "LoadEffects.h"
 

@@ -51,7 +51,7 @@ effects from this one class.
 #include <wx/stdpaths.h>
 
 #include "BasicUI.h"
-#include "../EffectEditor.h"
+#include "EffectEditor.h"
 #include "../EffectManager.h"
 #include "FileNames.h"
 #include "../../LabelTrack.h"
@@ -70,14 +70,14 @@ effects from this one class.
 #include "ViewInfo.h"
 #include "WaveClip.h"
 #include "WaveTrack.h"
-#include "../../widgets/valnum.h"
+#include "valnum.h"
 #include "AudacityMessageBox.h"
 #include "Prefs.h"
 #include "wxFileNameWrapper.h"
 #include "../../prefs/GUIPrefs.h"
 #include "../../tracks/playabletrack/wavetrack/ui/WaveTrackView.h"
 #include "../../tracks/playabletrack/wavetrack/ui/WaveTrackViewConstants.h"
-#include "../../widgets/NumericTextCtrl.h"
+#include "NumericTextCtrl.h"
 #include "ProgressDialog.h"
 
 #include "FileDialog/FileDialog.h"
