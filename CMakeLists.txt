@@ -609,6 +609,35 @@ if(${_OPT}has_crashreports)
    add_subdirectory( "crashreporter" )
 endif()
 
+# Handle Ladspa option
+cmd_option(
+   ${_OPT}use_ladspa
+   "Use LADSPA plug-in support [on, off]"
+   ON
+)
+set( USE_LADSPA ${${_OPT}use_ladspa} CACHE INTERNAL "" )
+
+# Detect, which version of FileDialog to use for
+# We always assume that GTK is used on platforms other than Windows and macOS,
+# as there is no other implementation available now
+if( CMAKE_SYSTEM_NAME MATCHES "Darwin" )
+   set( wxIS_MAC on )
+elseif( CMAKE_SYSTEM_NAME MATCHES "Windows" )
+   set ( wxIS_WIN on )
+else()
+   set ( wxIS_GTK on)
+endif()
+
+# Handle Audio Units option
+if( CMAKE_SYSTEM_NAME MATCHES "Darwin" )
+   cmd_option(
+      ${_OPT}use_audio_units
+      "Use Audio Units plug-in support [on, off]"
+      ON
+   )
+   set( USE_AUDIO_UNITS ${${_OPT}use_audio_units} CACHE INTERNAL "" )
+endif()
+
 add_subdirectory( "images" )
 add_subdirectory( "libraries" )
 add_subdirectory( "locale" )

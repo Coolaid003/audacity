@@ -12,9 +12,11 @@
 #include "ProjectAudioIO.h"
 #include "RefreshCode.h"
 
+#include <wx/event.h>
 
+#include "../../../../TrackArt.h"
 #include "../../../../TrackArtist.h"
-#include "../../../../Snap.h"
+#include "Snap.h"
 #include "../../../../TrackPanelDrawingContext.h"
 #include "../../../../../images/Cursors.h"
 #include "WaveClip.h"
@@ -243,7 +245,7 @@ public:
       if(iPass == TrackArtist::PassSnapping && mSnap.Snapped())
       {
          auto &dc = context.dc;
-         SnapManager::Draw(&dc, rect.x + mSnap.outCoord, -1);
+         TrackArt::DrawSnapLines(&dc, rect.x + mSnap.outCoord, -1);
       }
    }
 

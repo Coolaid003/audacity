@@ -231,7 +231,8 @@ private:
 
    Observer::Subscription mUndoSubscription
       , mThemeChangeSubscription
-      , mTitleChangeSubcription
+      , mTitleChangeSubscription
+      , mSnappingChangedSubscription
    ;
    std::unique_ptr<PlaybackScroller> mPlaybackScroller;
 

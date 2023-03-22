@@ -43,35 +43,6 @@ else()
    file( WRITE "${_PRVDIR}/RevisionIdent.h" "" )
 endif()
 
-# Handle Audio Units option
-if( CMAKE_SYSTEM_NAME MATCHES "Darwin" )
-   cmd_option(
-      ${_OPT}use_audio_units
-      "Use Audio Units plug-in support [on, off]"
-      ON
-   )
-   set( USE_AUDIO_UNITS ${${_OPT}use_audio_units} CACHE INTERNAL "" )
-endif()
-
-# Detect, which version of FileDialog to use for
-# We always assume that GTK is used on platforms other than Windows and macOS,
-# as there is no other implementation available now
-if( CMAKE_SYSTEM_NAME MATCHES "Darwin" )
-   set( wxIS_MAC on )
-elseif( CMAKE_SYSTEM_NAME MATCHES "Windows" )
-   set ( wxIS_WIN on )
-else()
-   set ( wxIS_GTK on)
-endif()
-
-# Handle Ladspa option
-cmd_option(
-   ${_OPT}use_ladspa
-   "Use LADSPA plug-in support [on, off]"
-   ON
-)
-set( USE_LADSPA ${${_OPT}use_ladspa} CACHE INTERNAL "" )
-
 # Handle VST option
 cmd_option(
    ${_OPT}use_vst
@@ -167,14 +138,10 @@ list( APPEND SOURCES
       LyricsWindow.h
       Menus.cpp
       Menus.h
-      MIDIPlay.cpp
-      MIDIPlay.h
       MixerBoard.cpp
       MixerBoard.h
       MovableControl.cpp
       MovableControl.h
-      NoteTrack.cpp
-      NoteTrack.h
       PitchName.cpp
       PitchName.h
       PluginRegistrationDialog.cpp
@@ -190,8 +157,6 @@ list( APPEND SOURCES
       ProjectFileManager.h
       ProjectManager.cpp
       ProjectManager.h
-      ProjectSelectionManager.cpp
-      ProjectSelectionManager.h
       ProjectSettings.cpp
       ProjectSettings.h
       ProjectWindow.cpp
@@ -211,8 +176,6 @@ list( APPEND SOURCES
       SelectUtilities.h
       ShuttleGetDefinition.cpp
       ShuttleGetDefinition.h
-      Snap.cpp
-      Snap.h
       SoundActivatedRecord.cpp
       SoundActivatedRecord.h
       SpectralDataDialog.cpp
@@ -231,8 +194,6 @@ list( APPEND SOURCES
       ThemedWrappers.h
       TimeDialog.cpp
       TimeDialog.h
-      TimeTrack.cpp
-      TimeTrack.h
       TimerRecordDialog.cpp
       TimerRecordDialog.h
       TrackArt.cpp
@@ -477,9 +438,12 @@ list( APPEND SOURCES
 
       $<$<BOOL:${USE_VST}>:
          effects/VST/VSTControl.h
+         effects/VST/VSTEditor.cpp
+         effects/VST/VSTEditor.h
          effects/VST/VSTEffect.cpp
          effects/VST/VSTEffect.h
-         effects/VST/aeffectx.h
+         effects/VST/VSTEffectOptionsDialog.cpp
+         effects/VST/VSTEffectOptionsDialog.h
       >
 
       $<$<AND:$<BOOL:${USE_VST}>,$<BOOL:${wxIS_GTK}>>:
@@ -498,46 +462,25 @@ list( APPEND SOURCES
       >
 
       $<$<BOOL:${${_OPT}has_vst3}>:
-         effects/VST3/AudacityVst3HostApplication.h
-         effects/VST3/AudacityVst3HostApplication.cpp
-         effects/VST3/memorystream.h
-         effects/VST3/memorystream.cpp
          effects/VST3/VST3Editor.cpp
          effects/VST3/VST3Editor.h
          effects/VST3/VST3Effect.h
          effects/VST3/VST3Effect.cpp
-         effects/VST3/VST3EffectsModule.h
-         effects/VST3/VST3EffectsModule.cpp
-         effects/VST3/VST3Instance.h
-         effects/VST3/VST3Instance.cpp
-         effects/VST3/VST3Utils.h
-         effects/VST3/VST3Utils.cpp
-         effects/VST3/VST3Wrapper.h
-         effects/VST3/VST3Wrapper.cpp
          effects/VST3/VST3OptionsDialog.h
          effects/VST3/VST3OptionsDialog.cpp
          effects/VST3/VST3ParametersWindow.h
          effects/VST3/VST3ParametersWindow.cpp
-         effects/VST3/internal/ConnectionProxy.h
-         effects/VST3/internal/ConnectionProxy.cpp
          effects/VST3/internal/PlugFrame.h
          effects/VST3/internal/PlugFrame.cpp
       >
 
-      $<$<AND:$<BOOL:${${_OPT}has_vst3}>,$<BOOL:${wxIS_WIN}>>:
-         effects/VST3/module_win32.cpp
-      >
       $<$<AND:$<BOOL:${${_OPT}has_vst3}>,$<BOOL:${wxIS_GTK}>>:
-         effects/VST3/module_linux.cpp
          effects/VST3/internal/x11/RunLoop.h
          effects/VST3/internal/x11/RunLoop.cpp
          effects/VST3/internal/x11/PlugFrame.h
          effects/VST3/internal/x11/PlugFrame.cpp
          effects/VST3/internal/x11/SocketWindow.h
          effects/VST3/internal/x11/SocketWindow.cpp
-      >
-      $<$<AND:$<BOOL:${${_OPT}has_vst3}>,$<BOOL:${wxIS_MAC}>>:
-         effects/VST3/module_mac.mm
       >
 
       # Audio Unit Effects
@@ -551,22 +494,17 @@ list( APPEND SOURCES
          effects/audiounits/AudioUnitEffect.h
          effects/audiounits/AudioUnitEffectOptionsDialog.cpp
          effects/audiounits/AudioUnitEffectOptionsDialog.h
-         effects/audiounits/AudioUnitEffectsModule.cpp
-         effects/audiounits/AudioUnitEffectsModule.h
-         effects/audiounits/AudioUnitInstance.cpp
-         effects/audiounits/AudioUnitInstance.h
-         effects/audiounits/AudioUnitUtils.cpp
-         effects/audiounits/AudioUnitUtils.h
-         effects/audiounits/AudioUnitWrapper.cpp
-         effects/audiounits/AudioUnitWrapper.h
       >
 
       # Ladspa Effects
 
       $<$<BOOL:${USE_LADSPA}>:
+         effects/ladspa/LadspaEditor.cpp
+         effects/ladspa/LadspaEditor.h
          effects/ladspa/LadspaEffect.cpp
          effects/ladspa/LadspaEffect.h
-         effects/ladspa/ladspa.h
+	 effects/ladspa/LadspaEffectOptionsDialog.cpp
+	 effects/ladspa/LadspaEffectOptionsDialog.h
       >
 
       # LV2 Effects
@@ -578,30 +516,11 @@ list( APPEND SOURCES
          effects/lv2/LV2Effect.h
          effects/lv2/LV2EffectMeter.cpp
          effects/lv2/LV2EffectMeter.h
-         effects/lv2/LV2FeaturesList.cpp
-         effects/lv2/LV2FeaturesList.h
-         effects/lv2/LV2Instance.cpp
-         effects/lv2/LV2Instance.h
-         effects/lv2/LV2InstanceFeaturesList.cpp
-         effects/lv2/LV2InstanceFeaturesList.h
-         effects/lv2/LV2Ports.cpp
-         effects/lv2/LV2Ports.h
-         effects/lv2/LV2Preferences.cpp
-         effects/lv2/LV2Preferences.h
-         effects/lv2/LV2Symbols.cpp
-         effects/lv2/LV2Symbols.h
+         effects/lv2/LV2PreferencesDialog.cpp
+         effects/lv2/LV2PreferencesDialog.h
          effects/lv2/LV2UIFeaturesList.cpp
          effects/lv2/LV2UIFeaturesList.h
-         effects/lv2/LV2Utils.h
-         effects/lv2/LV2Wrapper.cpp
-         effects/lv2/LV2Wrapper.h
-         effects/lv2/LoadLV2.cpp
-         effects/lv2/LoadLV2.h
          effects/lv2/NativeWindow.h
-         effects/lv2/lv2_external_ui.h
-         effects/lv2/zix/common.h
-         effects/lv2/zix/ring.cpp
-         effects/lv2/zix/ring.h
       >
 
       # Nyquist Effects
@@ -811,10 +730,12 @@ list( APPEND SOURCES
       toolbars/ScrubbingToolBar.h
       toolbars/SelectionBar.cpp
       toolbars/SelectionBar.h
-      toolbars/SelectionBarListener.h
+      toolbars/SnappingToolBar.cpp
+      toolbars/SnappingToolBar.h
       toolbars/SpectralSelectionBar.cpp
       toolbars/SpectralSelectionBar.h
-      toolbars/SpectralSelectionBarListener.h
+      toolbars/TimeSignatureToolBar.cpp
+      toolbars/TimeSignatureToolBar.h
       toolbars/TimeToolBar.cpp
       toolbars/TimeToolBar.h
       toolbars/ToolBar.cpp
@@ -851,6 +772,8 @@ list( APPEND SOURCES
       tracks/playabletrack/notetrack/ui/NoteTrackButtonHandle.h
       tracks/playabletrack/notetrack/ui/NoteTrackControls.cpp
       tracks/playabletrack/notetrack/ui/NoteTrackControls.h
+      tracks/playabletrack/notetrack/ui/NoteTrackDisplayData.cpp
+      tracks/playabletrack/notetrack/ui/NoteTrackDisplayData.h
       tracks/playabletrack/notetrack/ui/NoteTrackMenuItems.cpp
       tracks/playabletrack/notetrack/ui/NoteTrackShifter.cpp
       tracks/playabletrack/notetrack/ui/NoteTrackSliderHandles.cpp
@@ -1184,10 +1107,6 @@ set( LIBRARIES
       ZLIB::ZLIB
       libmp3lame::libmp3lame
       SndFile::sndfile
-      $<$<BOOL:${${_OPT}has_vst3}>:vst3sdk::base>
-      $<$<BOOL:${${_OPT}has_vst3}>:vst3sdk::pluginterfaces>
-      $<$<BOOL:${${_OPT}has_vst3}>:vst3sdk::sdk_hosting>
-      $<$<BOOL:${${_OPT}has_vst3}>:vst3sdk::sdk_common>
       $<$<BOOL:${USE_LIBID3TAG}>:libid3tag::libid3tag>
       $<$<BOOL:${USE_LIBFLAC}>:FLAC::FLAC>
       $<$<BOOL:${USE_LIBFLAC}>:FLAC::FLAC++>
@@ -1200,8 +1119,6 @@ set( LIBRARIES
       $<$<BOOL:${USE_LIBVORBIS}>:Vorbis::vorbisenc>
       $<$<BOOL:${USE_LIBOPUS}>:Opus::opus>
       $<$<BOOL:${USE_LIBTWOLAME}>:twolame>
-      $<$<BOOL:${USE_LV2}>:lv2>
-      $<$<BOOL:${USE_MIDI}>:portmidi::portmidi>
       $<$<BOOL:${USE_MIDI}>:portsmf>
       $<$<BOOL:${USE_NYQUIST}>:libnyquist>
       $<$<BOOL:${USE_SBSMS}>:libsbsms>
@@ -1338,23 +1255,15 @@ elseif( CMAKE_SYSTEM_NAME MATCHES "Darwin" )
    )
    if(${_OPT}has_vst3 AND ${wxIS_MAC})
       set_source_files_properties(
-         effects/VST3/module_mac.mm
-         PROPERTIES
-            COMPILE_FLAGS "-fobjc-arc"
-            SKIP_PRECOMPILE_HEADERS YES
-      )
-
-      set_source_files_properties(
          effects/VST/VSTControlOSX.mm
          PROPERTIES
             SKIP_PRECOMPILE_HEADERS YES
       )
    endif()
-
+ 
    # Add our required frameworks
    list( APPEND LIBRARIES
       PRIVATE
-         "-framework AudioUnit"
          "-framework CoreAudio"
          "-framework CoreAudioKit"
    )
@@ -1508,8 +1417,17 @@ set( AUDACITY_LIBRARIES
    lib-project-file-io-interface
    lib-effects-interface
    lib-wx-init-interface
+   lib-note-track-interface
+   lib-ladspa-interface
+   lib-lv2-interface
+   lib-vst-interface
+   lib-vst3-interface
+   lib-time-track-interface
+   lib-snapping-interface
 )
-
+if (USE_AUDIO_UNITS AND wxIS_MAC)
+   list(APPEND AUDACITY_LIBRARIES lib-audio-unit-interface)
+endif()
 if (${_OPT}use_ffmpeg)
    list( APPEND AUDACITY_LIBRARIES
       lib-ffmpeg-support-interface

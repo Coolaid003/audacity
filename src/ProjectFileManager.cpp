@@ -25,8 +25,6 @@ Paul Licameli split from AudacityProject.cpp
 #include "Project.h"
 #include "ProjectFileIO.h"
 #include "ProjectHistory.h"
-#include "ProjectNumericFormats.h"
-#include "ProjectSelectionManager.h"
 #include "ProjectWindows.h"
 #include "ProjectRate.h"
 #include "ProjectSettings.h"
@@ -46,7 +44,6 @@ Paul Licameli split from AudacityProject.cpp
 #include "export/Export.h"
 #include "import/Import.h"
 #include "import/ImportMIDI.h"
-#include "toolbars/SelectionBar.h"
 #include "AudacityMessageBox.h"
 #include "widgets/FileHistory.h"
 #include "widgets/UnwritableLocationErrorDialog.h"
@@ -1005,22 +1002,7 @@ AudacityProject *ProjectFileManager::OpenProjectFile(
    const bool err = results.trackError;
 
    if (bParseSuccess) {
-      auto &formats = ProjectNumericFormats::Get( project );
-      auto &settings = ProjectSettings::Get( project );
-      window.mbInitializingScrollbar = true; // this must precede AS_SetSnapTo
-         // to make persistence of the vertical scrollbar position work
-
-      auto &selectionManager = ProjectSelectionManager::Get( project );
-      selectionManager.AS_SetSnapTo(settings.GetSnapTo());
-      selectionManager.AS_SetSelectionFormat(formats.GetSelectionFormat());
-      selectionManager.TT_SetAudioTimeFormat(formats.GetAudioTimeFormat());
-      selectionManager.SSBL_SetFrequencySelectionFormatName(
-      formats.GetFrequencySelectionFormatName());
-      selectionManager.SSBL_SetBandwidthSelectionFormatName(
-      formats.GetBandwidthSelectionFormatName());
-
-      SelectionBar::Get( project )
-         .SetRate( ProjectRate::Get(project).GetRate() );
+      window.mbInitializingScrollbar = true;
 
       ProjectHistory::Get( project ).InitialState();
       TrackFocus::Get( project ).Set( *tracks.Any().begin() );
@@ -1156,7 +1138,6 @@ ProjectFileManager::AddImportedTracks(const FilePath &fileName,
    // if this is the first file that is imported
    if (initiallyEmpty && newRate > 0) {
       ProjectRate::Get(project).SetRate( newRate );
-      SelectionBar::Get( project ).SetRate( newRate );
    }
 
    history.PushState(XO("Imported '%s'").Format( fileName ),

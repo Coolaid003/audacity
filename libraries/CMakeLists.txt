@@ -44,6 +44,14 @@ set( LIBRARIES
    lib-wx-wrappers
    lib-shuttlegui
    lib-wx-init
+   lib-note-track
+   lib-ladspa
+   lib-lv2
+   lib-vst
+   lib-vst3
+   lib-audio-unit
+   lib-time-track
+   lib-snapping
 )
 
 if ( ${_OPT}has_networking )

@@ -11,11 +11,14 @@ Paul Licameli split from TrackPanel.cpp
 
 #include "CutlineHandle.h"
 
+#include <wx/cursor.h>
+#include <wx/event.h>
+
 #include "../../../../HitTestResult.h"
 #include "ProjectAudioIO.h"
 #include "ProjectHistory.h"
 #include "../../../../RefreshCode.h"
-#include "../../../../Snap.h" // for kPixelTolerance
+#include "Snap.h" // for kPixelTolerance
 #include "../../../../TrackPanelMouseEvent.h"
 #include "UndoManager.h"
 #include "ViewInfo.h"

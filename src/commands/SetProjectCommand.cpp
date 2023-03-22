@@ -25,12 +25,12 @@
 #include "../CommonCommandFlags.h"
 #include "LoadCommands.h"
 #include "Project.h"
+#include "ProjectRate.h"
 #include "../ProjectWindows.h"
 #include "WaveTrack.h"
 #include "SettingsVisitor.h"
 #include "ShuttleGui.h"
 #include "CommandContext.h"
-#include "../toolbars/SelectionBar.h"
 
 #include <wx/frame.h>
 
@@ -88,11 +88,8 @@ bool SetProjectCommand::Apply(const CommandContext & context)
    if( bHasName )
       window.SetLabel(mName);
 
-   if( bHasRate && mRate >= 1 && mRate <= 1000000 )
-   {
-      auto &bar = SelectionBar::Get( project );
-      bar.SetRate( mRate );
-   }
+   if (bHasRate && mRate >= 1 && mRate <= 1000000)
+      ProjectRate::Get(project).SetRate(mRate);
 
    if( bHasSizing )
    {

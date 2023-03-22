@@ -21,6 +21,7 @@ Paul Licameli split from AudacityProject.cpp
 #include "ProjectFileIO.h"
 #include "ProjectWindows.h"
 #include "ProjectStatus.h"
+#include "ProjectSnap.h"
 #include "RefreshCode.h"
 #include "TrackPanelMouseEvent.h"
 #include "TrackPanelAx.h"
@@ -699,8 +700,12 @@ ProjectWindow::ProjectWindow(wxWindow * parent, wxWindowID id,
       theTheme.Subscribe(*this, &ProjectWindow::OnThemeChange);
 
    // Subscribe to title changes published by ProjectFileIO
-   mTitleChangeSubcription = ProjectFileIO::Get(project)
+   mTitleChangeSubscription = ProjectFileIO::Get(project)
       .Subscribe(*this, &ProjectWindow::OnProjectTitleChange);
+
+   // Subscribe to snapping changes
+   mSnappingChangedSubscription =
+      ProjectSnap::Get(project).Subscribe([this](auto) { RedrawProject(); });
    // And also establish my initial consistency with it
    this->OnProjectTitleChange(ProjectFileIOMessage::ProjectTitleChange);
 }
