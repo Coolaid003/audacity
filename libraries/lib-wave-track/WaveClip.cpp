@@ -154,6 +154,11 @@ size_t WaveClip::GetAppendBufferLen() const
    return GetSequence()->GetAppendBufferLen();
 }
 
+samplePtr WaveClip::GetAppendBuffer()
+{
+   return GetSequence()->GetAppendBuffer();
+}
+
 constSamplePtr WaveClip::GetAppendBuffer() const
 {
    return GetSequence()->GetAppendBuffer();
@@ -221,6 +226,16 @@ void WaveClip::UpdateEnvelopeTrackLen()
    auto len = (mSequence->GetNumSamples().as_double()) / mRate;
    if (len != mEnvelope->GetTrackLen())
       mEnvelope->SetTrackLen(len, 1.0 / GetRate());
+}
+
+void WaveClip::SetRetainCount(size_t count)
+{
+   mSequence->SetRetainCount(count);
+}
+
+size_t WaveClip::GetRetainCount() const
+{
+   return mSequence->GetRetainCount();
 }
 
 /*! @excsafety{Strong} */
@@ -1009,10 +1024,11 @@ void WaveClip::Offset(double delta) noexcept
 // We are within the clip if start < t <= end.
 // Note that BeforeClip and AfterClip must be consistent 
 // with this definition.
-bool WaveClip::WithinPlayRegion(double t) const
+bool WaveClip::WithinPlayRegion(double t, bool inclusiveEnd) const
 {
     auto ts = TimeToSamples(t);
-    return ts > GetPlayStartSample() && ts < GetPlayEndSample() + GetAppendBufferLen();
+    return ts > GetPlayStartSample() &&
+       ts < GetPlayEndSample() + (inclusiveEnd ? 1 : 0) + GetAppendBufferLen();
 }
 
 bool WaveClip::BeforePlayStartTime(double t) const

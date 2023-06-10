@@ -193,8 +193,9 @@ public:
 
    // One and only one of the following is true for a given t (unless the clip
    // has zero length -- then BeforePlayStartTime() and AfterPlayEndTime() can both be true).
+   // (Or unless inclusiveEnd == true)
    // WithinPlayRegion() is true if the time is substantially within the clip
-   bool WithinPlayRegion(double t) const;
+   bool WithinPlayRegion(double t, bool inclusiveEnd = false) const;
    bool BeforePlayStartTime(double t) const;
    bool AfterPlayEndTime(double t) const;
 
@@ -244,7 +245,13 @@ public:
     * function to tell the envelope about it. */
    void UpdateEnvelopeTrackLen();
 
-   //! For use in importing pre-version-3 projects to preserve sharing of blocks; no dithering applied
+   //! Set a minimum number of samples to retain in memory between Append()s
+   //! (when at least so many are appended), until Flush()
+   void SetRetainCount(size_t count);
+   size_t GetRetainCount() const;
+
+   //! For use in importing pre-version-3 projects to preserve sharing of blocks;
+   //! no dithering applied
    std::shared_ptr<SampleBlock> AppendNewBlock(
       samplePtr buffer, sampleFormat format, size_t len);
 
@@ -346,6 +353,7 @@ public:
    //! Silences the 'length' amount of samples starting from 'offset'(relative to the play start)
    void SetSilence(sampleCount offset, sampleCount length);
 
+   samplePtr GetAppendBuffer();
    constSamplePtr GetAppendBuffer() const;
    size_t GetAppendBufferLen() const;
 

@@ -32,6 +32,7 @@
    Clone of the FFT Filter effect, no longer part of Audacity.
 
 *//*******************************************************************/
+
 #include "Equalization.h"
 #include "EqualizationUI.h"
 #include "EffectEditor.h"
@@ -41,6 +42,10 @@
 
 #include "WaveClip.h"
 #include "WaveTrack.h"
+#include <thread>
+
+// Define this to try parallelized EQ
+#define EQ_THREADS
 
 const EffectParameterMethods& EffectEqualization::Parameters() const
 {
@@ -411,40 +416,121 @@ bool EffectEqualization::TransferDataToWindow(const EffectSettings &settings)
 }
 
 namespace {
-struct EqualizationTask {
-   EqualizationTask( size_t M, size_t idealBlockLen, WaveTrack &t )
-      : buffer{ idealBlockLen }
+//! Function takes an increment of samples processed, returns true to continue
+using Poller = std::function<bool(sampleCount)>;
+
+class EffectTask {
+public:
+   virtual ~EffectTask();
+   virtual void Run(sampleCount start, sampleCount len) = 0;
+   //! Called only after successful Run() of both tasks; `other` has been
+   //! Combine()d or Flush()ed
+   virtual void Combine(EffectTask &&other) = 0;
+   //! Called only after successful Run(); Combine() will not be called
+   virtual void Flush() = 0;
+};
+
+EffectTask::~EffectTask() = default;
+
+struct EqualizationTask : EffectTask {
+   EqualizationTask(const EqualizationFilter &parameters,
+      size_t M, size_t idealBlockLen, const WaveTrack &t, Poller &poller,
+      bool first, bool last
+   )  : mParameters{ parameters }
+      // Capacity for M - 1 additional right tail samples
+      , buffer{ idealBlockLen + (M - 1) }
+      , retained{ first ? 0 : (M - 1) }
+      , input{ t }
+      , poller{ poller }
       , output{ t.EmptyCopy() }
-      , leftTailRemaining{ (M - 1) / 2 }
+      , M{ M }
+      , leftTailRemaining{ first ? (M - 1) / 2 : (M - 1) }
+      , idealBlockLen{ idealBlockLen }
+      , first{ first }
+      , last{ last }
    {
       memset(lastWindow, 0, windowSize * sizeof(float));
+      output->SetRetainCount(M - 1);
    }
+
+   EqualizationTask(EqualizationTask&&) = default;
+
+   ~EqualizationTask() override;
 
    void AccumulateSamples(constSamplePtr buffer, size_t len)
    {
       auto leftTail = std::min(len, leftTailRemaining);
+      if (leftTail > 0 && !first)
+         // Keep these samples for overlap-add onto the end of the left
+         // neighboring track
+         memcpy(retained.get() + (M - 1) - leftTailRemaining,
+            buffer, leftTail * sizeof(float));
       leftTailRemaining -= leftTail;
       len -= leftTail;
       buffer += leftTail * sizeof(float);
       output->Append(buffer, floatSample, len);
    }
 
+   void Run(sampleCount start, sampleCount len) override;
+   void Combine(EffectTask &&other) override;
+   void Flush() override;
+
+   const EqualizationFilter &mParameters;
+
    static constexpr auto windowSize = EqualizationFilter::windowSize;
    Floats window1{ windowSize };
    Floats window2{ windowSize };
+   Floats scratch{ windowSize };
 
    Floats buffer;
+   Floats retained;
 
    // These pointers are swapped after each FFT window
    float *thisWindow{ window1.get() };
    float *lastWindow{ window2.get() };
 
+   const WaveTrack &input;
+   Poller &poller;
+
    // create a NEW WaveTrack to hold all of the output,
    // including 'tails' each end
    std::shared_ptr<WaveTrack> output;
 
+   size_t M;
    size_t leftTailRemaining;
+   size_t idealBlockLen;
+
+   const bool first;
+   const bool last;
 };
+
+EqualizationTask::~EqualizationTask() = default;
+
+//! Wrap a task with deferral of exception propagation
+struct TaskRunner {
+   TaskRunner(EffectTask &task, std::atomic<bool> &bLoopSuccess)
+      : task{ task }, bLoopSuccess{ bLoopSuccess }
+   {}
+
+   // Suitable as a thread function
+   void operator ()(sampleCount start, sampleCount len) noexcept;
+
+   EffectTask &task;
+   std::atomic<bool> &bLoopSuccess;
+   std::exception_ptr pExc;
+};
+
+void TaskRunner::operator ()(sampleCount start, sampleCount len) noexcept
+{
+   try {
+      task.Run(start, len);
+   }
+   catch(...) {
+      // Other tasks can poll for the shut-down message
+      bLoopSuccess.store(false, std::memory_order_relaxed);
+      pExc = std::current_exception();
+   }
+}
 }
 
 // EffectEqualization implementation
@@ -453,39 +539,142 @@ bool EffectEqualization::ProcessOne(int count, WaveTrack * t,
                                     sampleCount start, sampleCount len)
 {
    constexpr auto windowSize = EqualizationFilter::windowSize;
+   const auto originalLen = len;
 
    const auto &M = mParameters.mM;
 
    wxASSERT(M - 1 < windowSize);
    size_t L = windowSize - (M - 1);   //Process L samples at a go
-   auto s = start;
-   auto idealBlockLen = t->GetMaxBlockSize() * 4;
+   auto idealBlockLen = t->GetMaxBlockSize();
    if (idealBlockLen % L != 0)
       idealBlockLen += (L - (idealBlockLen % L));
 
-   EqualizationTask task{ M, idealBlockLen, *t };
-   auto &buffer = task.buffer;
-   auto &window1 = task.window1;
-   auto &window2 = task.window2;
-   auto &thisWindow = task.thisWindow;
-   auto &lastWindow = task.lastWindow;
+   TrackProgress(count, 0.);
 
-   auto originalLen = len;
+   std::atomic<bool> bLoopSuccess = true;
+   using Position = std::atomic<sampleCount::type>;
+   auto position = Position{ (start - (M - 1) / 2).as_long_long() };
+   assert(position.is_lock_free());
 
-   auto &output = task.output;
+   Poller poller([
+      this, &bLoopSuccess, &position,
+      start, count, originalLen
+      // Construct one shared poller while in the main thread
+      , threadId = std::this_thread::get_id()
+   ](sampleCount block) {
+      // The two atomics don't synchronize any other data transfers so
+      // only need relaxed updates
+      constexpr auto order = std::memory_order_relaxed;
+      // Update counter atomically; note, fetch_add returns old value
+      sampleCount value =
+         block + (position.fetch_add(block.as_long_long(), order));
+      // Poll the progress dialog only on the main thread
+      if (threadId == std::this_thread::get_id() &&
+         TrackProgress(count, (std::max(value, start)).as_double() /
+                        originalLen.as_double()))
+         bLoopSuccess.store(false, order);
+      return bLoopSuccess.load(order);
+   });
+
+   // Divide among available processors, with a little oversubscription
+   // (If there is blocking on contended resources, let some other thread resume
+   // calculations)
+   const auto nProcessors = std::thread::hardware_concurrency();
+   auto nTasks = nProcessors + 2;
+   const auto nBlocks = ((len + idealBlockLen - 1) / idealBlockLen);
+   if (nTasks > nBlocks)
+      nTasks = std::max<unsigned>(1, nBlocks.as_size_t());
+
+   #ifndef EQ_THREADS
+   nTasks = 1;
+   #endif
+
+   std::vector<EqualizationTask> tasks;
+   tasks.reserve(nTasks);
+
+   // First task
+   tasks.emplace_back(
+      mParameters, M, idealBlockLen, *t, poller, true, nTasks-- == 1);
+   // More tasks
+   while (nTasks)
+      tasks.emplace_back(
+         mParameters, M, idealBlockLen, *t, poller, false, nTasks-- == 1);
+   nTasks = tasks.size();
+
    t->ConvertToSampleFormat( floatSample );
 
-   TrackProgress(count, 0.);
-   bool bLoopSuccess = true;
-   size_t wcopy = 0;
+   // Allocate the runners, to examine their exceptions after
+   std::vector<TaskRunner> runners;
+   runners.reserve(nTasks);
 
-   while (len != 0)
    {
+      // Scope for threads that execute the runners
+      std::vector<std::thread> threads;
+      threads.reserve(nTasks - 1);
+
+      size_t ii = 0;
+      auto taskStart = start,
+         nextStart =
+            start + std::min(len, idealBlockLen * (nBlocks * ++ii / nTasks)),
+         len0 = nextStart - start;
+      for (auto &task : tasks) {
+         auto &runner = runners.emplace_back(task, bLoopSuccess);
+         if (ii > 1)
+            threads.emplace_back(
+               std::ref(runner), taskStart, nextStart - taskStart);
+         taskStart = nextStart;
+         // If nBlocks/nProcessors has a fraction, this length calculation
+         // rounds sometimes up and sometimes down
+         nextStart =
+            start + std::min(len, idealBlockLen * (nBlocks * ++ii / nTasks));
+      }
+      assert(nextStart == start + len);
+
+      // Main thread executes the first task
+      runners[0](start, len0);
+
+      // Finish the others
+      for (auto &thread : threads) {
+         thread.join();
+         // Main-thread reinvocation of poller makes the progress indicator fill
+         // to 100%
+         poller(0);
+      }
+   }
+
+   for (auto &runner : runners) {
+      if (runner.pExc)
+         std::rethrow_exception(runner.pExc);
+   }
+
+   // Any exceptions in the remining serial post-processing can propagate simply
+   // Task combination might be parallelized too with some more ingenuity, but
+   // it might not make significant extra savings of time
+   if (bLoopSuccess) {
+      // Combine tasks right to left
+      auto first = begin(tasks), iter = end(tasks);
+      assert(iter != first);
+      (--iter)->Flush();
+      for (; iter != first; --iter)
+         (iter - 1)->Combine(std::move(*iter));
+      PasteOverPreservingClips(*t, start, originalLen, *first->output);
+   }
+
+   return bLoopSuccess;
+}
+
+void EqualizationTask::Run(sampleCount start, sampleCount len)
+{
+   size_t L = windowSize - (M - 1);   //Process L samples at a go
+   size_t wcopy = 0;
+   // Number of loop passes is floor((len + idealBlockLen - 1) / idealBlockLen)
+   for (auto s = start; len > 0; s += idealBlockLen, len -= idealBlockLen) {
       auto block = limitSampleBufferSize( idealBlockLen, len );
 
-      t->GetFloats(buffer.get(), s, block);
+      input.GetFloats(buffer.get(), s, block);
 
-      for(size_t i = 0; i < block; i += L)   //go through block in lumps of length L
+      size_t i = 0;
+      for(; i < block; i += L)   //go through block in lumps of length L
       {
          wcopy = std::min <size_t> (L, block - i);
          for(size_t j = 0; j < wcopy; j++)
@@ -493,7 +682,7 @@ bool EffectEqualization::ProcessOne(int count, WaveTrack * t,
          for(auto j = wcopy; j < windowSize; j++)
             thisWindow[j] = 0;   //this includes the padding
 
-         mParameters.Filter(windowSize, thisWindow);
+         mParameters.Filter(windowSize, thisWindow, scratch.get());
 
          // Overlap - Add
          for(size_t j = 0; (j < M - 1) && (j < wcopy); j++)
@@ -504,41 +693,67 @@ bool EffectEqualization::ProcessOne(int count, WaveTrack * t,
          std::swap( thisWindow, lastWindow );
       }  //next i, lump of this block
 
-      task.AccumulateSamples((samplePtr)buffer.get(), block);
-      len -= block;
-      s += block;
-
-      if (TrackProgress(count, ( s - start ).as_double() /
-                        originalLen.as_double()))
-      {
-         bLoopSuccess = false;
-         break;
-      }
-   }
-
-   if(bLoopSuccess)
-   {
-      // M-1 samples of 'tail' left in lastWindow, get them now
-      if(wcopy < (M - 1)) {
-         // Still have some overlap left to process
+      if (len <= block) {
+         // Finish the last block.
+         i -= L;
+         i += wcopy;
+         // Must generate some extra to compensate the left tail latency of
+         // (M - 1) / 2 samples.  In fact, exceed that, generating (M - 1),
+         // unless this task is rightmost.
          // (note that lastWindow and thisWindow have been exchanged at this point
          //  so that 'thisWindow' is really the window prior to 'lastWindow')
-         size_t j = 0;
-         for(; j < M - 1 - wcopy; j++)
-            buffer[j] = lastWindow[wcopy + j] + thisWindow[L + wcopy + j];
-         // And fill in the remainder after the overlap
-         for( ; j < M - 1; j++)
-            buffer[j] = lastWindow[wcopy + j];
-      } else {
-         for(size_t j = 0; j < M - 1; j++)
-            buffer[j] = lastWindow[wcopy + j];
+         const auto required = last ? ((M - 1) / 2) : (M - 1);
+         if (wcopy < required) {
+            // Still have some overlap left to process
+            size_t j = 0;
+            for(; j < required - wcopy; ++j)
+               buffer[i + j] = lastWindow[wcopy + j] + thisWindow[L + wcopy + j];
+            // And fill in the remainder after the overlap
+            for( ; j < required; ++j)
+               buffer[i + j] = lastWindow[wcopy + j];
+         } else {
+            for(size_t j = 0; j < required; ++j)
+               buffer[i + j] = lastWindow[wcopy + j];
+         }
+         block += required;
       }
-      task.AccumulateSamples((samplePtr)buffer.get(), M - 1);
-      output->Flush();
+   
+      AccumulateSamples((samplePtr)buffer.get(), block);
+
+      if (!poller(block))
+         break;
    }
+}
 
-   if (bLoopSuccess)
-      PasteOverPreservingClips(*t, start, originalLen, *output);
+void EqualizationTask::Combine(EffectTask &&other)
+{
+   auto lastClip = this->output->RightmostOrNewClip();
+   auto len = lastClip->GetAppendBufferLen();
+   // Successful Run() always accumulates at least M - 1 samples in the last
+   // pass, and that was set as the retain count of the track
+   assert(len >= M - 1);
+   auto ptr =
+      reinterpret_cast<float*>(lastClip->GetAppendBuffer()) + len - (M - 1);
 
-   return bLoopSuccess;
+   auto &otherTask = static_cast<EqualizationTask&>(other);
+   assert(!otherTask.first);
+   auto src = move(otherTask.retained);
+
+   std::transform( // std::par_unseq,
+      ptr, ptr + (M - 1), src.get(), ptr, std::plus{});
+   // Left track must flush (making a block) before pasting into it, which is
+   // why right to left reduction is more convenient:  the right track is
+   // already done and can be discarded.  Repeated pastings will
+   // only reconstruct a block sequence without making any other blocks.
+   this->output->Flush();
+   auto pTrack = move(otherTask.output);
+   this->output->Paste(this->output->GetEndTime(), pTrack.get(),
+      // Join touching clips!
+      true);
+}
+
+void EqualizationTask::Flush()
+{
+   // Not expecting overlap-add from a right neighbor
+   output->Flush();
 }
