@@ -100,7 +100,12 @@ LabelTrackView::LabelTrackView( const std::shared_ptr<Track> &pTrack )
    : CommonTrackView{ pTrack }
 {
    ResetFont();
-   CreateCustomGlyphs();
+
+   wxBitmap& sampleGlyph = theTheme.Bitmap(bmpLabelGlyph0);
+   mIconWidth = sampleGlyph.GetWidth();
+   mIconHeight = sampleGlyph.GetHeight();
+   mTextHeight = 8; // until proved otherwise...
+
    ResetFlags();
 
    // Events will be emitted by the track
@@ -197,19 +202,14 @@ std::vector<UIHandlePtr> LabelTrackView::DetailedHitTest
 }
 
 // static member variables.
-bool LabelTrackView::mbGlyphsReady=false;
-
 wxFont LabelTrackView::msFont;
 
-/// We have several variants of the icons (highlighting).
-/// The icons are draggable, and you can drag one boundary
-/// or all boundaries at the same timecode depending on whether you
-/// click the centre (for all) or the arrow part (for one).
-/// Currently we have twelve variants but we're only using six.
-wxBitmap LabelTrackView::mBoundaryGlyphs[ NUM_GLYPH_CONFIGS * NUM_GLYPH_HIGHLIGHTS ];
 int LabelTrackView::mIconHeight;
 int LabelTrackView::mIconWidth;
 int LabelTrackView::mTextHeight;
+
+wxBrush LabelTrackView::mLabelTextNormalBrush;
+std::vector<wxBitmap> LabelTrackView::mColorizedBitmaps;
 
 int LabelTrackView::mFontHeight=-1;
 
@@ -259,6 +259,27 @@ void LabelTrackView::ResetFont()
    wxString facename = gPrefs->Read(wxT("/GUI/LabelFontFacename"), wxT(""));
    int size = gPrefs->Read(wxT("/GUI/LabelFontSize"), DefaultFontSize);
    msFont = GetFont(facename, size);
+}
+
+void LabelTrackView::SetColours(int iColorIndex)
+{
+   switch (iColorIndex % 4)
+   {
+      default:
+      case 0:
+         mLabelTextNormalBrush.SetColour(theTheme.Colour(clrLabelTextNormalBrush));
+         break;
+      case 1: // RED
+         mLabelTextNormalBrush.SetColour(wxColor(250, 174, 174));
+         break;
+      case 2: // GREEN
+         mLabelTextNormalBrush.SetColour(wxColor(160, 220, 160));
+         break;
+      case 3: //BLACK
+         mLabelTextNormalBrush.SetColour(wxColor(209, 209, 209));
+         break;
+   }
+   InvalidateColorizedGlyphs();
 }
 
 /// ComputeTextPosition is 'smart' about where to display
@@ -796,6 +817,8 @@ void LabelTrackView::Draw
       FindTrack()->SubstitutePendingChangedTrack());
    const auto &mLabels = pTrack->GetLabels();
 
+   SetColours(pTrack->GetColourIndex());
+
    TrackArt::DrawBackgroundWithSelection( context, r, pTrack.get(),
       AColor::labelSelectedBrush, AColor::labelUnselectedBrush,
       SyncLock::IsSelectedOrSyncLockSelected(pTrack.get()) );
@@ -822,7 +845,7 @@ void LabelTrackView::Draw
    ComputeLayout( r, zoomInfo );
    dc.SetTextForeground(theTheme.Colour( clrLabelTrackText));
    dc.SetBackgroundMode(wxTRANSPARENT);
-   dc.SetBrush(AColor::labelTextNormalBrush);
+   dc.SetBrush(mLabelTextNormalBrush);
    dc.SetPen(AColor::labelSurroundPen);
    int GlyphLeft;
    int GlyphRight;
@@ -860,7 +883,7 @@ void LabelTrackView::Draw
 #endif
          
          dc.SetBrush(mNavigationIndex == i || (pHit && pHit->mMouseOverLabel == i) 
-            ? AColor::labelTextEditBrush : AColor::labelTextNormalBrush);
+            ? AColor::labelTextEditBrush : mLabelTextNormalBrush);
          DrawBar(dc, labelStruct, r);
 
          bool selected = mTextEditIndex == i;
@@ -870,10 +893,10 @@ void LabelTrackView::Draw
          else if (highlight)
             dc.SetBrush(AColor::uglyBrush);
          else
-            dc.SetBrush(AColor::labelTextNormalBrush);
+            dc.SetBrush(mLabelTextNormalBrush);
          DrawTextBox(dc, labelStruct, r);
 
-         dc.SetBrush(AColor::labelTextNormalBrush);
+         dc.SetBrush(mLabelTextNormalBrush);
       }
    }
 
@@ -892,7 +915,7 @@ void LabelTrackView::Draw
          dc.SetBrush(AColor::labelTextEditBrush);
       DrawText( dc, labelStruct, r );
       if(mTextEditIndex == i )
-         dc.SetBrush(AColor::labelTextNormalBrush);
+         dc.SetBrush(mLabelTextNormalBrush);
    }}
 
    // Draw the cursor, if there is one.
@@ -2159,112 +2182,54 @@ void LabelTrackView::OnSelectionChange( const LabelTrackEvent &e )
    }
 }
 
-wxBitmap & LabelTrackView::GetGlyph( int i)
+/// We have several variants of the icons (highlighting).
+/// The icons are draggable, and you can drag one boundary
+/// or all boundaries at the same timecode depending on whether you
+/// click the centre (for all) or the arrow part (for one).
+/// Currently we have twelve variants but we're only using six.
+wxBitmap & LabelTrackView::GetGlyph(int i)
 {
-   return theTheme.Bitmap( i + bmpLabelGlyph0);
+   if (mColorizedBitmaps.size() <= i)
+      mColorizedBitmaps.resize(i + 1);
+   if (!mColorizedBitmaps[i].IsOk())
+   {
+      // glyphs and masks are interleaved
+      wxImage &imgOutline = theTheme.Image(2 * i + bmpLabelGlyph0);
+      wxImage Image = theTheme.Image(2 * i + bmpLabelMask0).Copy();  // will render into this copy
+
+      wxASSERT(imgOutline.GetSize() == Image.GetSize());
+      wxASSERT(imgOutline.HasAlpha() && Image.HasAlpha());
+
+      // FOR DESIGNERS:
+      // You can construct the equivalent blending setup in GIMP by creating
+      // three layers: On the bottom, a "wash" layer filled with the solid color
+      // of the label track. Above that, the label mask image, set to "multiply"
+      // and with its "composite mode" set to "intersection". The top layer is
+      // the label glyph in normal mode.
+
+      // you would think there would be a better way to do this,
+      // but there are so many holes in this api...
+      const auto& color = mLabelTextNormalBrush.GetColour();
+      const float div = 1. / 255.f, div2 = div * div;
+      const float rgb[3] = { color.Red() * div2, color.Green() * div2, color.Blue() * div2 };
+      for (unsigned char* s = imgOutline.GetData(), *sa = imgOutline.GetAlpha(),
+         *d = Image.GetData(), *da = Image.GetAlpha(),
+         *daend = Image.GetAlpha() + Image.GetWidth() * Image.GetHeight(); da < daend;
+         s += 3, sa++, d += 3, da++)
+      {
+         for (int j = 0; j < 3; ++j)
+            d[j] = std::clamp<int>(((rgb[j] * d[j] * da[0]) * (255 - sa[0]) + s[j] * sa[0]) * div + 0.5f, 0, 255);
+         da[0] = std::clamp<int>(da[0] * (255 - sa[0]) * div + sa[0], 0, 255);
+      }
+
+      mColorizedBitmaps[i] = wxBitmap(Image);
+   }
+   return mColorizedBitmaps[i];
 }
 
-// This one XPM spec is used to generate a number of
-// different wxIcons.
-/* XPM */
-static const char *const GlyphXpmRegionSpec[] = {
-/* columns rows colors chars-per-pixel */
-"15 23 7 1",
-/* Default colors, with first color transparent */
-". c none",
-"2 c black",
-"3 c black",
-"4 c black",
-"5 c #BEBEF0",
-"6 c #BEBEF0",
-"7 c #BEBEF0",
-/* pixels */
-"...............",
-"...............",
-"...............",
-"....333.444....",
-"...3553.4774...",
-"...3553.4774...",
-"..35553.47774..",
-"..35522222774..",
-".3552666662774.",
-".3526666666274.",
-"355266666662774",
-"355266666662774",
-"355266666662774",
-".3526666666274.",
-".3552666662774.",
-"..35522222774..",
-"..35553.47774..",
-"...3553.4774...",
-"...3553.4774...",
-"....333.444....",
-"...............",
-"...............",
-"..............."
-};
-
-/// CreateCustomGlyphs() creates the mBoundaryGlyph array.
-/// It's a bit like painting by numbers!
-///
-/// Schematically the glyphs we want will 'look like':
-///   <O,  O>   and   <O>
-/// for a left boundary to a label, a right boundary and both.
-/// we're creating all three glyphs using the one Xpm Spec.
-///
-/// When we hover over a glyph we highlight the
-/// inside of either the '<', the 'O' or the '>' or none,
-/// giving 3 x 4 = 12 combinations.
-///
-/// Two of those combinations aren't used, but
-/// treating them specially would make other code more
-/// complicated.
-void LabelTrackView::CreateCustomGlyphs()
+void LabelTrackView::InvalidateColorizedGlyphs()
 {
-   int iConfig;
-   int iHighlight;
-   int index;
-   const int nSpecRows =
-      sizeof( GlyphXpmRegionSpec )/sizeof( GlyphXpmRegionSpec[0]);
-   const char *XmpBmp[nSpecRows];
-
-   // The glyphs are declared static wxIcon; so we only need
-   // to create them once, no matter how many LabelTracks.
-   if( mbGlyphsReady )
-      return;
-
-   // We're about to tweak the basic color spec to get 12 variations.
-   for( iConfig=0;iConfig<NUM_GLYPH_CONFIGS;iConfig++)
-   {
-      for( iHighlight=0;iHighlight<NUM_GLYPH_HIGHLIGHTS;iHighlight++)
-      {
-         index = iConfig + NUM_GLYPH_CONFIGS * iHighlight;
-         // Copy the basic spec...
-         memcpy( XmpBmp, GlyphXpmRegionSpec, sizeof( GlyphXpmRegionSpec ));
-         // The highlighted region (if any) is white...
-         if( iHighlight==1 ) XmpBmp[5]="5 c #FFFFFF";
-         if( iHighlight==2 ) XmpBmp[6]="6 c #FFFFFF";
-         if( iHighlight==3 ) XmpBmp[7]="7 c #FFFFFF";
-         // For left or right arrow the other side of the glyph
-         // is the transparent color.
-         if( iConfig==0) { XmpBmp[3]="3 c none"; XmpBmp[5]="5 c none"; }
-         if( iConfig==1) { XmpBmp[4]="4 c none"; XmpBmp[7]="7 c none"; }
-         // Create the icon from the tweaked spec.
-         mBoundaryGlyphs[index] = wxBitmap(XmpBmp);
-         // Create the mask
-         // SetMask takes ownership
-         mBoundaryGlyphs[index].SetMask(safenew wxMask(mBoundaryGlyphs[index], wxColour(192, 192, 192)));
-      }
-   }
-
-   mIconWidth  = mBoundaryGlyphs[0].GetWidth();
-   mIconHeight = mBoundaryGlyphs[0].GetHeight();
-   mTextHeight = mIconHeight; // until proved otherwise...
-   // The icon should have an odd width so that the
-   // line goes exactly down the middle.
-   wxASSERT( (mIconWidth %2)==1);
-
-   mbGlyphsReady=true;
+   mColorizedBitmaps.clear();
 }
 
 #include "../../../LabelDialog.h"

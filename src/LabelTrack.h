@@ -118,6 +118,9 @@ class AUDACITY_DLL_API LabelTrack final
    double GetStartTime() const override;
    double GetEndTime() const override;
 
+   void SetColourIndex(int index) { mColourIndex = index; };
+   int GetColourIndex() const { return mColourIndex; };
+
    using Holder = std::shared_ptr<LabelTrack>;
 
 private:
@@ -190,6 +193,7 @@ public:
 
  private:
    LabelArray mLabels;
+   int mColourIndex;
 
    // Set in copied label tracks
    double mClipLen;

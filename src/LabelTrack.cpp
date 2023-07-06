@@ -78,6 +78,7 @@ LabelTrack* LabelTrack::Create(TrackList& trackList)
 
 LabelTrack::LabelTrack():
    Track(),
+   mColourIndex(0),
    mClipLen(0.0),
    miLastLabel(-1)
 {
@@ -85,6 +86,7 @@ LabelTrack::LabelTrack():
 
 LabelTrack::LabelTrack(const LabelTrack &orig, ProtectedCreationArg &&a)
    : Track(orig, std::move(a))
+   , mColourIndex( orig.mColourIndex )
    , mClipLen(0.0)
 {
    for (auto &original: orig.mLabels) {
@@ -643,6 +645,12 @@ bool LabelTrack::HandleXMLTag(const std::string_view& tag, const AttributesList 
             mLabels.clear();
             mLabels.reserve(nValue);
          }
+         else if (attr == "colorindex")
+         {
+            if (!value.TryGet(nValue))
+               return false;
+            SetColourIndex(nValue);
+         }
       }
 
       return true;
@@ -667,6 +675,7 @@ void LabelTrack::WriteXML(XMLWriter &xmlFile) const
    xmlFile.StartTag(wxT("labeltrack"));
    this->Track::WriteCommonXMLAttributes( xmlFile );
    xmlFile.WriteAttr(wxT("numlabels"), len);
+   xmlFile.WriteAttr(wxT("colorindex"), mColourIndex);
 
    for (auto &labelStruct: mLabels) {
       xmlFile.StartTag(wxT("label"));

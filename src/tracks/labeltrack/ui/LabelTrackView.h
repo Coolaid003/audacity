@@ -124,6 +124,7 @@ public:
 
 private:
    static wxBitmap & GetGlyph( int i);
+   static void InvalidateColorizedGlyphs();
 
    struct Index
    {
@@ -195,8 +196,8 @@ private:
    static int mIconWidth;
    static int mTextHeight;
 
-   static bool mbGlyphsReady;
-   static wxBitmap mBoundaryGlyphs[NUM_GLYPH_CONFIGS * NUM_GLYPH_HIGHLIGHTS];
+   static wxBrush mLabelTextNormalBrush;
+   static std::vector<wxBitmap> mColorizedBitmaps;
 
    static int mFontHeight;
    mutable int mCurrentCursorPos;                  /// current cursor position
@@ -208,6 +209,7 @@ private:
 
    void ComputeTextPosition(const wxRect & r, int index) const;
    void ComputeLayout(const wxRect & r, const ZoomInfo &zoomInfo) const;
+   static void SetColours(int iColorIndex);
    static void DrawLines( wxDC & dc, const LabelStruct &ls, const wxRect & r);
    static void DrawGlyphs( wxDC & dc, const LabelStruct &ls, const wxRect & r,
       int GlyphLeft, int GlyphRight);
