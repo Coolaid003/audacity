@@ -30,24 +30,36 @@
 
 namespace {
 
-   void TrimLeftTo(WaveTrack::Interval& interval, double t)
+   void TrimLeftTo(WaveTrack& track, WaveTrack::Interval& interval, double t)
    {
-      interval.TrimLeftTo(t);
+      const auto rate = track.GetRate();
+      const auto t0 = interval.GetPlayStartTime();
+      interval.TrimLeftTo(t0 + std::floor((t - t0) * rate) / rate);
    }
 
-   void TrimRightTo(WaveTrack::Interval& interval, double t)
+   void TrimRightTo(WaveTrack& track, WaveTrack::Interval& interval, double t)
    {
-      interval.TrimRightTo(t);
+      const auto rate = track.GetRate();
+      const auto t1 = interval.GetPlayEndTime();
+      interval.TrimRightTo(t1 - std::floor((t1 - t) * rate) / rate);
    }
 
-   void StretchLeftTo(WaveTrack::Interval& interval, double t)
+   void StretchLeftTo(WaveTrack& track, WaveTrack::Interval& interval, double t)
    {
-      interval.StretchLeftTo(t);
+      const auto rate = track.GetRate();
+      const auto t1 = interval.GetPlayEndTime();
+      const auto duration = std::floor((t1 - t) * rate) / rate;
+      if(duration >= 1.0 / rate)
+         interval.Stretch(duration, true);
    }
 
-   void StretchRightTo(WaveTrack::Interval& interval, double t)
+   void StretchRightTo(WaveTrack& track, WaveTrack::Interval& interval, double t)
    {
-      interval.StretchRightTo(t);
+      const auto rate = track.GetRate();
+      const auto t0 = interval.GetPlayStartTime();
+      const auto duration = std::floor((t - t0) * rate) / rate;
+      if(duration >= 1.0 / rate)
+         interval.Stretch(duration);
    }
 }
 
@@ -83,8 +95,7 @@ double GetLeftAdjustLimit(const WaveTrack::Interval& interval,
                           bool isStretchMode)
 {
    if (!adjustingLeftBorder)
-      // A clip of one sample is invisible - who needs that ? Leave at least 2.
-      return interval.Start() + 2.0 / track.GetRate();
+      return interval.Start() + 1.0 / track.GetRate();
 
    const auto prevInterval = track.GetNextInterval(interval, PlaybackDirection::backward);
    if(isStretchMode)
@@ -101,8 +112,7 @@ double GetRightAdjustLimit(
    bool isStretchMode)
 {
    if (adjustingLeftBorder)
-      // A clip of one sample is invisible - who needs that ? Leave at least 2.
-      return interval.End() - 2.0 / track.GetRate();
+      return interval.End() - 1.0 / track.GetRate();
 
    const auto nextInterval = track.GetNextInterval(interval, PlaybackDirection::forward);
    if (isStretchMode)
@@ -119,7 +129,7 @@ double GetRightAdjustLimit(
 class AdjustClipBorder final : public WaveClipAdjustBorderHandle::AdjustPolicy
 {
 public:
-   using AdjustHandler = std::function<void(WaveTrack::Interval&, double)>;
+   using AdjustHandler = std::function<void(WaveTrack&, WaveTrack::Interval&, double)>;
 
 private:
    std::shared_ptr<WaveTrack> mTrack;
@@ -138,7 +148,7 @@ private:
    void TrimTo(double t)
    {
       mBorderPosition = std::clamp(t, mRange.first, mRange.second);
-      mAdjustHandler(*mInterval, mBorderPosition);
+      mAdjustHandler(*mTrack, *mInterval, t);
    }
 
    //Search for a good snap points among all tracks except
@@ -199,6 +209,7 @@ public:
                  GetRightAdjustLimit(*mInterval, *mTrack, adjustLeftBorder, isStretchMode) }
       , mAdjustHandler { std::move(adjustHandler) }
    {
+      assert(mRange.first <= mRange.second);
       if(const auto trackList = mTrack->GetOwner())
       {
          mSnapManager = std::make_unique<SnapManager>(

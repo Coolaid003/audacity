@@ -201,16 +201,10 @@ void WaveTrack::Interval::TrimRightTo(double t)
       GetClip(channel)->TrimRightTo(t);
 }
 
-void WaveTrack::Interval::StretchLeftTo(double t)
+void WaveTrack::Interval::Stretch(double duration, bool toLeft)
 {
    for(unsigned channel = 0; channel < NChannels(); ++channel)
-      GetClip(channel)->StretchLeftTo(t);
-}
-
-void WaveTrack::Interval::StretchRightTo(double t)
-{
-   for(unsigned channel = 0; channel < NChannels(); ++channel)
-      GetClip(channel)->StretchRightTo(t);
+      GetClip(channel)->Stretch(duration, toLeft);
 }
 
 void WaveTrack::Interval::ApplyStretchRatio(
@@ -1191,6 +1185,9 @@ auto WaveTrack::CopyOne(
    // Duplicate command and I changed its behavior in that case.
 
    for (const auto &clip : track.mClips) {
+      if(clip->IsEmpty())
+         continue;
+
       if (t0 <= clip->GetPlayStartTime() && t1 >= clip->GetPlayEndTime()) {
          // Whole clip is in copy region
          //wxPrintf("copy: clip %i is in copy region\n", (int)clip);
@@ -2141,6 +2138,10 @@ bool WaveTrack::FormatConsistencyCheck() const
 
 void WaveTrack::InsertClip(WaveClipHolder clip)
 {
+   assert(clip->GetIsPlaceholder() || !clip->IsEmpty());
+   if(!clip->GetIsPlaceholder() && clip->IsEmpty())
+      return;
+
    const auto& tempo = GetProjectTempo();
    if (tempo.has_value())
       clip->OnProjectTempoChange(std::nullopt, *tempo);
@@ -2680,6 +2681,12 @@ void WaveTrack::HandleXMLEndTag(const std::string_view&  WXUNUSED(tag))
    // File compatibility breaks have intervened long since, and the line above
    // would now have undesirable side effects
 #endif
+   // Check for zero-length clips and remove them
+   for (auto it = mClips.begin(); it != mClips.end();)
+      if ((*it)->IsEmpty())
+         it = mClips.erase(it);
+      else
+         ++it;
 }
 
 XMLTagHandler *WaveTrack::HandleXMLChild(const std::string_view& tag)
@@ -2725,7 +2732,7 @@ XMLTagHandler *WaveTrack::HandleXMLChild(const std::string_view& tag)
       auto clip = std::make_shared<WaveClip>(1,
          mpFactory, mLegacyFormat, mLegacyRate, GetWaveColorIndex());
       const auto xmlHandler = clip.get();
-      InsertClip(std::move(clip));
+      mClips.push_back(std::move(clip));
       return xmlHandler;
    }
 
@@ -3584,7 +3591,11 @@ WaveClip* WaveTrack::CreateClip(double offset, const wxString& name)
       mpFactory, GetSampleFormat(), GetRate(), GetWaveColorIndex());
    clip->SetName(name);
    clip->SetSequenceStartTime(offset);
-   InsertClip(std::move(clip));
+
+   const auto& tempo = GetProjectTempo();
+   if (tempo.has_value())
+      clip->OnProjectTempoChange(std::nullopt, *tempo);
+   mClips.push_back(std::move(clip));
 
    auto result = mClips.back().get();
    // TODO wide wave tracks -- for now assertion is correct because widths are

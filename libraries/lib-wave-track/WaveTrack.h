@@ -959,8 +959,7 @@ public:
 
       void TrimLeftTo(double t);
       void TrimRightTo(double t);
-      void StretchLeftTo(double t);
-      void StretchRightTo(double t);
+      void Stretch(double duration, bool toLeft = false);
 
       void ApplyStretchRatio(const std::function<void(double)>& reportProgress);
       bool StretchRatioEquals(double value) const;
@@ -1138,6 +1137,7 @@ private:
 
    //! Sets project tempo on clip upon push. Use this instead of
    //! `mClips.push_back`.
+   //! @pre clip->GetIsPlaceholder() || !clip->IsEmpty()
    void InsertClip(WaveClipHolder clip);
 
    void ApplyStretchRatioOne(

@@ -161,10 +161,10 @@ public:
    // Set rate without resampling. This will change the length of the clip
    void SetRate(int rate);
 
+   void Stretch(double duration, bool toLeft = false);
+
    //! Stretches from left to the absolute time (if in expected range)
-   void StretchLeftTo(double to);
    //! Sets from the right to the absolute time (if in expected range)
-   void StretchRightTo(double to);
 
    double GetStretchRatio() const override;
 
@@ -189,6 +189,7 @@ public:
    void SetColourIndex(int index) { mColourIndex = index; }
    int GetColourIndex() const { return mColourIndex; }
 
+   double GetPivot() const noexcept;
    double GetSequenceStartTime() const noexcept;
    void SetSequenceStartTime(double startTime);
    double GetSequenceEndTime() const;
@@ -210,6 +211,8 @@ public:
    //! Always a multiple of the track's sample period, whether the clip is
    //! stretched or not.
    double GetPlayDuration() const;
+
+   bool IsEmpty() const;
 
    //! Real start time of the clip, quantized to raw sample rate (track's rate)
    sampleCount GetPlayStartSample() const;
