@@ -13,6 +13,7 @@
 #ifndef _LABELTRACK_
 #define _LABELTRACK_
 
+#include "Prefs.h"
 #include "SelectedRegion.h"
 #include "Track.h"
 
@@ -21,13 +22,25 @@ class wxTextFile;
 class AudacityProject;
 class TimeWarper;
 
+class LabelStruct;
 class LabelTrack;
 struct LabelTrackHit;
 struct TrackPanelDrawingContext;
 
-class AUDACITY_DLL_API LabelStruct
+using LabelStructAttachment = ClientData::Cloneable<>;
+
+using LabelStructAttachments = ClientData::Site<
+   LabelStruct,
+   LabelStructAttachment,
+   ClientData::DeepCopying
+>;
+
+class LABEL_TRACK_API LabelStruct
+   : public LabelStructAttachments
 {
 public:
+   using Attachments = LabelStructAttachments;
+
    LabelStruct() = default;
    // Copies region
    LabelStruct(const SelectedRegion& region, const wxString &aTitle);
@@ -38,9 +51,6 @@ public:
    double getDuration() const { return selectedRegion.duration(); }
    double getT0() const { return selectedRegion.t0(); }
    double getT1() const { return selectedRegion.t1(); }
-   // Returns true iff the label got inverted:
-   bool AdjustEdge( int iEdge, double fNewTime);
-   void MoveLabel( int iEdge, double fNewTime);
 
    struct BadFormatException {};
    static LabelStruct Import(wxTextFile &file, int &index);
@@ -68,24 +78,17 @@ public:
 public:
    SelectedRegion selectedRegion;
    wxString title; /// Text of the label.
-   mutable int width{}; /// width of the text in pixels.
-
-// Working storage for on-screen layout.
-   mutable int x{};     /// Pixel position of left hand glyph
-   mutable int x1{};    /// Pixel position of right hand glyph
-   mutable int xText{}; /// Pixel position of left hand side of text box
-   mutable int y{};     /// Pixel position of label.
-
-   bool updated{};                  /// flag to tell if the label times were updated
 };
 
 using LabelArray = std::vector<LabelStruct>;
 
-class AUDACITY_DLL_API LabelTrack final
+class LABEL_TRACK_API LabelTrack final
    : public UniqueChannelTrack<>
    , public Observer::Publisher<struct LabelTrackEvent>
 {
  public:
+   static EnumSetting< bool > StyleSetting;
+
    static wxString GetDefaultName();
 
    // Construct and also build all attachments
@@ -217,17 +220,18 @@ struct LabelTrackEvent
       Deletion,
       Permutation,
       Selection,
+      TitleChange,
    } type;
 
    const std::weak_ptr<Track> mpTrack;
 
-   // invalid for selection events
+   // invalid for selection events; holds former text for title change
    wxString mTitle;
 
    // invalid for addition and selection events
    int mFormerPosition;
 
-   // invalid for deletion and selection events
+   // invalid for deletion and selection events; == former for title change
    int mPresentPosition;
 
    LabelTrackEvent( Type type, const std::shared_ptr<LabelTrack> &pTrack,

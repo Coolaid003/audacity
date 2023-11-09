@@ -16,19 +16,17 @@
 #include <wx/string.h>
 #include <memory>
 
-class Effect;
 class LabelTrack;
 class Track;
 class TrackList;
 
 // For the use of analyzers, which don't need to make output wave tracks,
 // but may need to add label tracks.
-class AUDACITY_DLL_API AddedAnalysisTrack {
+class LABEL_TRACK_API AddedAnalysisTrack {
    AddedAnalysisTrack(const AddedAnalysisTrack&) = delete;
 
 public:
-   AddedAnalysisTrack(Effect *pEffect, const wxString &name);
-   AddedAnalysisTrack() {}
+   AddedAnalysisTrack(TrackList &trackList, const wxString &name);
 
    // So you can have a vector of them
    AddedAnalysisTrack(AddedAnalysisTrack &&that);
@@ -42,22 +40,23 @@ public:
    ~AddedAnalysisTrack();
 
 private:
-   Effect *mpEffect{};
+   TrackList *mpTrackList{};
    LabelTrack *mpTrack{};
 };
 
 // Set name to given value if that is not empty, else use default name
-std::shared_ptr<AddedAnalysisTrack> AddAnalysisTrack(Effect &effect,
+LABEL_TRACK_API
+std::shared_ptr<AddedAnalysisTrack> AddAnalysisTrack(TrackList &trackList,
    const wxString &name = wxString());
 
 // For the use of analyzers, which don't need to make output wave tracks,
 // but may need to modify label tracks.
-class AUDACITY_DLL_API ModifiedAnalysisTrack {
+class LABEL_TRACK_API ModifiedAnalysisTrack {
    ModifiedAnalysisTrack(const ModifiedAnalysisTrack&) = delete;
 
 public:
    ModifiedAnalysisTrack(
-      Effect *pEffect, const LabelTrack &origTrack, const wxString &name);
+      TrackList &trackList, const LabelTrack &origTrack, const wxString &name);
    ModifiedAnalysisTrack();
 
    // So you can have a vector of them
@@ -72,13 +71,14 @@ public:
    ~ModifiedAnalysisTrack();
 
 private:
-   Effect *mpEffect{};
+   TrackList *mpTrackList{};
    LabelTrack *mpTrack{};
    std::shared_ptr<TrackList> mpOrigTrack{};
 };
 
 // Set name to given value if that is not empty, else use default name
-ModifiedAnalysisTrack ModifyAnalysisTrack(Effect &effect,
+LABEL_TRACK_API
+ModifiedAnalysisTrack ModifyAnalysisTrack(TrackList &trackList,
    const LabelTrack &origTrack, const wxString &name = wxString());
 
 #endif

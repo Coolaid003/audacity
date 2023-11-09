@@ -12,7 +12,7 @@
 **********************************************************************/
 #if defined(USE_VAMP)
 #include "VampEffect.h"
-#include "../AnalysisTracks.h"
+#include "AnalysisTracks.h"
 #include "../EffectEditor.h"
 
 #include <vamp-hostsdk/Plugin.h>
@@ -35,7 +35,7 @@
 #include "../../widgets/valnum.h"
 #include "AudacityMessageBox.h"
 
-#include "../../LabelTrack.h"
+#include "LabelTrack.h"
 #include "WaveTrack.h"
 
 enum
@@ -409,7 +409,7 @@ bool VampEffect::Process(EffectInstance &, EffectSettings &)
       }
 
       const auto effectName = GetSymbol().Translation();
-      addedTracks.push_back(AddAnalysisTrack(*this,
+      addedTracks.push_back(AddAnalysisTrack(*mTracks,
          multiple
          ? wxString::Format( _("%s: %s"), leader->GetName(), effectName )
          : effectName

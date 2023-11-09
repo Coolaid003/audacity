@@ -38,12 +38,24 @@ for drawing different aspects of the label and its text box.
 #include <wx/log.h>
 #include <wx/tokenzr.h>
 
+#include "BasicUI.h"
 #include "Prefs.h"
 #include "Project.h"
-#include "prefs/ImportExportPrefs.h"
 
 #include "TimeWarper.h"
-#include "AudacityMessageBox.h"
+
+EnumSetting< bool > LabelTrack::StyleSetting{
+   wxT("/FileFormats/LabelStyleChoice"),
+   {
+      EnumValueSymbol{ wxT("Standard"), XXO("S&tandard") },
+      EnumValueSymbol{ wxT("Extended"), XXO("E&xtended (with frequency ranges)") },
+   },
+   0, // true
+
+   {
+      true, false,
+   },
+};
 
 LabelTrack::Interval::~Interval() = default;
 
@@ -156,7 +168,15 @@ void LabelTrack::SetLabel( size_t iLabel, const LabelStruct &newLabel )
       wxASSERT( false );
       mLabels.resize( iLabel + 1 );
    }
-   mLabels[ iLabel ] = newLabel;
+   auto &label = mLabels[ iLabel ];
+   bool titleChange = (label.title != newLabel.title);
+   auto oldTitle = titleChange ? label.title : wxString{};
+   label = newLabel;
+   if (titleChange) {
+      auto ii = static_cast<int>(iLabel);
+      Publish({ LabelTrackEvent::TitleChange,
+         this->SharedPointer<LabelTrack>(), oldTitle, ii, ii });
+   }
 }
 
 LabelTrack::~LabelTrack()
@@ -308,12 +328,6 @@ LabelStruct::LabelStruct(const SelectedRegion &region,
 : selectedRegion(region)
 , title(aTitle)
 {
-   updated = false;
-   width = 0;
-   x = 0;
-   x1 = 0;
-   xText = 0;
-   y = 0;
 }
 
 LabelStruct::LabelStruct(const SelectedRegion &region,
@@ -324,13 +338,6 @@ LabelStruct::LabelStruct(const SelectedRegion &region,
 {
    // Overwrite the times
    selectedRegion.setTimes(t0, t1);
-
-   updated = false;
-   width = 0;
-   x = 0;
-   x1 = 0;
-   xText = 0;
-   y = 0;
 }
 
 void LabelTrack::SetSelected( bool s )
@@ -348,33 +355,6 @@ TrackListHolder LabelTrack::Clone() const
    auto result = std::make_shared<LabelTrack>(*this, ProtectedCreationArg{});
    result->Init(*this);
    return TrackList::Temporary(nullptr, result, nullptr);
-}
-
-// Adjust label's left or right boundary, depending which is requested.
-// Return true iff the label flipped.
-bool LabelStruct::AdjustEdge( int iEdge, double fNewTime)
-{
-   updated = true;
-   if( iEdge < 0 )
-      return selectedRegion.setT0(fNewTime);
-   else
-      return selectedRegion.setT1(fNewTime);
-}
-
-// We're moving the label.  Adjust both left and right edge.
-void LabelStruct::MoveLabel( int iEdge, double fNewTime)
-{
-   double fTimeSpan = getDuration();
-
-   if( iEdge < 0 )
-   {
-      selectedRegion.setTimes(fNewTime, fNewTime+fTimeSpan);
-   }
-   else
-   {
-      selectedRegion.setTimes(fNewTime-fTimeSpan, fNewTime);
-   }
-   updated = true;
 }
 
 LabelStruct LabelStruct::Import(wxTextFile &file, int &index)
@@ -462,7 +442,7 @@ void LabelStruct::Export(wxTextFile &file) const
    auto f1 = selectedRegion.f1();
    if ((f0 == SelectedRegion::UndefinedFrequency &&
       f1 == SelectedRegion::UndefinedFrequency) ||
-      ImportExportPrefs::LabelStyleSetting.ReadEnum())
+      LabelTrack::StyleSetting.ReadEnum())
       return;
 
    // Write a \ character at the start of a second line,
@@ -570,7 +550,7 @@ void LabelTrack::Import(wxTextFile & in)
       catch(const LabelStruct::BadFormatException&) { error = true; }
    }
    if (error)
-      ::AudacityMessageBox( XO("One or more saved labels could not be read.") );
+      BasicUI::ShowMessageBox(XO("One or more saved labels could not be read."));
    SortLabels();
 }
 
@@ -755,7 +735,10 @@ bool LabelTrack::PasteOver(double t, const Track &src)
             labelStruct.getT1() + t,
             labelStruct.title
          };
-         mLabels.insert(mLabels.begin() + pos++, l);
+         mLabels.insert(mLabels.begin() + pos, l);
+         Publish({ LabelTrackEvent::Addition,
+            this->SharedPointer<LabelTrack>(), labelStruct.title, -1, pos });
+         ++pos;
       }
 
       return true;
@@ -820,8 +803,12 @@ bool LabelTrack::Repeat(double t0, double t1, int n)
             // Figure out where to insert
             while (pos < mLabels.size() &&
                    mLabels[pos].getT0() < l.getT0())
-               pos++;
+               ++pos;
             mLabels.insert(mLabels.begin() + pos, l);
+
+            Publish({ LabelTrackEvent::Addition,
+               this->SharedPointer<LabelTrack>(), label.title, -1,
+                  static_cast<int>(pos) });
          }
       }
       else if (relation == LabelStruct::BEGINS_IN_LABEL)
@@ -880,6 +867,9 @@ void LabelTrack::Silence(double t0, double t1, ProgressReporter)
          // This might not be the right place to insert, but we sort at the end
          ++i;
          mLabels.insert(mLabels.begin() + i, l);
+
+         Publish({ LabelTrackEvent::Addition,
+            this->SharedPointer<LabelTrack>(), label.title, -1, i });
       }
       else if (relation == LabelStruct::ENDS_IN_LABEL)
       {
