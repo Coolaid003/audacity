@@ -1319,6 +1319,7 @@ bool AudioIO::AllocateBuffers(
                   std::max( mPlaybackSamplesToCopy, mPlaybackQueueMinimum ),
                   false, // not interleaved
                   mRate, floatSample,
+                  false, // single buffering is sufficient
                   false, // low quality dithering and resampling
                   nullptr, // no custom mix-down
                   false // don't apply gains
