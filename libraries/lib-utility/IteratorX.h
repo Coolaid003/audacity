@@ -16,6 +16,7 @@
 #include <functional>
 #include <iterator>
 #include <limits>
+#include <type_traits>
 
 /**
   \brief A convenience for defining iterators that return rvalue types, so that
@@ -249,9 +250,12 @@ void for_each_in_range(Range &&range, Function &&fn)
 }
 
 template<typename Integral = int>
-class NumberIterator : public ValueIterator<Integral>
+class NumberIterator
+   : public ValueIterator<Integral, std::random_access_iterator_tag>
 {
 public:
+   using difference_type = std::make_signed_t<Integral>;
+
    explicit NumberIterator(Integral value) : mValue{ value } {}
 
    Integral operator *() const { return mValue; }
@@ -259,10 +263,64 @@ public:
    NumberIterator operator ++(int) const
    { auto result = *this; ++result; return result; }
 
+   NumberIterator &operator --() { --mValue; return *this; }
+   NumberIterator operator --(int) const
+   { auto result = *this; --result; return result; }
+
    friend bool operator ==(NumberIterator x, NumberIterator y)
    { return x.mValue == y.mValue; }
    friend bool operator !=(NumberIterator x, NumberIterator y)
    { return !(x == y); }
+
+   // More members to satisfy the LegacyRandomAccessIterator requirements
+   NumberIterator &operator +=(difference_type n)
+   {
+      mValue += n;
+      return *this;
+   }
+   friend inline NumberIterator operator +(NumberIterator a, difference_type n)
+   {
+      NumberIterator temp = a;
+      return temp += n;
+   }
+   friend inline NumberIterator operator +(difference_type n, NumberIterator a)
+   {
+      NumberIterator temp = a;
+      return temp += n;
+   }
+   NumberIterator &operator -=(difference_type n)
+   {
+      return *this += -n;
+   }
+   friend inline NumberIterator operator -(NumberIterator i, difference_type n)
+   {
+      NumberIterator temp = i;
+      return temp -= n;
+   }
+   friend inline difference_type operator -(NumberIterator a, NumberIterator b)
+   {
+      return a.mValue - b.mValue;
+   }
+   Integral operator [](difference_type n)
+   {
+      return mValue + n;
+   }
+   friend inline bool operator < (NumberIterator a, NumberIterator b)
+   {
+      return a.mValue < b.mValue;
+   }
+   friend inline bool operator > (NumberIterator a, NumberIterator b)
+   {
+      return b < a;
+   }
+   friend inline bool operator >= (NumberIterator a, NumberIterator b)
+   {
+      return !(a < b);
+   }
+   friend inline bool operator <= (NumberIterator a, NumberIterator b)
+   {
+      return !(a > b);
+   }
 
 private:
    Integral mValue;

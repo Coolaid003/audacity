@@ -16,10 +16,11 @@
 #include <optional>
 #include <unordered_map>
 #include <vector>
+#include "AtomicUniquePointer.h"
 #include "ClientData.h"
 #include "EffectInterface.h"
 #include "GlobalVariable.h"
-#include "MemoryX.h"
+#include "NonInterfering.h"
 #include "Observer.h"
 #include "PluginProvider.h" // for PluginID
 #include "XMLTagHandler.h"
