@@ -8,7 +8,7 @@
 
 namespace staffpad {
 
-class TimeAndPitch
+class TIME_AND_PITCH_API TimeAndPitch
 {
 public:
   TimeAndPitch(int sampleRate);
@@ -78,7 +78,6 @@ public:
 private:
   const int fftSize;
   static constexpr int overlap = 4;
-  static constexpr bool normalize_window = true; // compensate for ola window overlaps
   static constexpr bool modulate_synthesis_hop = true;
 
   void _process_hop(int hop_a, int hop_s);
@@ -94,6 +93,7 @@ private:
   int _availableOutputSamples = 0;
   int _numBins = fftSize / 2 + 1;
   double _overlap_a = overlap;
+  double _gainFact;
 
   int _analysis_hop_counter = 0;
 

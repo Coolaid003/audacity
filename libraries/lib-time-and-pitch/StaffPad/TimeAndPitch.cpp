@@ -4,6 +4,7 @@
 #include <array>
 #include <cassert>
 #include <utility>
+#include <fstream>
 
 #include "CircularSampleBuffer.h"
 #include "FourierTransform_pffft.h"
@@ -54,6 +55,18 @@ inline int getFftSize(int sampleRate)
   // without compromising performance.
   return 1 << (12 + (int)std::round(std::log2(sampleRate / 44100.)));
 }
+
+constexpr std::array<float, 2> hannCoefs { .5f, .5f };
+
+constexpr float getSynthesisScalar(float overlap)
+{
+   // Equation (2.25) in thesis, i.e., in Matlab code, 0.5*O*(a_0^2 + sum(a_.^2))
+   // Cosine window coefs
+   auto tmp = hannCoefs[0] * hannCoefs[0];
+   for (auto a : hannCoefs)
+      tmp += a * a;
+   return 2 / (tmp * overlap);
+}
 } // namespace
 
 struct TimeAndPitch::impl
@@ -66,7 +79,6 @@ struct TimeAndPitch::impl
   CircularSampleBuffer<float> inResampleInputBuffer[2];
   CircularSampleBuffer<float> inCircularBuffer[2];
   CircularSampleBuffer<float> outCircularBuffer[2];
-  CircularSampleBuffer<float> normalizationBuffer;
 
   SamplesReal fft_timeseries;
   SamplesComplex spectrum;
@@ -88,6 +100,7 @@ struct TimeAndPitch::impl
 
 TimeAndPitch::TimeAndPitch(int sampleRate)
     : fftSize(getFftSize(sampleRate))
+    , _gainFact(getSynthesisScalar(_overlap_a))
 {
 }
 
@@ -115,7 +128,6 @@ void TimeAndPitch::setup(int numChannels, int maxBlockSize)
     d->inCircularBuffer[ch].setSize(fftSize);
     d->outCircularBuffer[ch].setSize(outBufferSize);
   }
-  d->normalizationBuffer.setSize(outBufferSize);
 
   // fft coefficient buffers
   d->spectrum.setSize(_numChannels, _numBins);
@@ -132,11 +144,21 @@ void TimeAndPitch::setup(int numChannels, int maxBlockSize)
   d->cosWindow.setSize(1, fftSize);
   d->sqWindow.setSize(1, fftSize);
   auto* w = d->cosWindow.getPtr(0);
+  std::fill(w, w + fftSize, 0.f);
   auto* sqw = d->sqWindow.getPtr(0);
   for (int i = 0; i < fftSize; ++i)
   {
-    w[i] = -0.5f * std::cos(float(twoPi * (float)i / (float)fftSize)) + 0.5f;
-    sqw[i] = w[i] * w[i];
+    auto p = 0;
+    auto sign = 1.f;
+    for (const auto a : hannCoefs)
+    {
+       const auto cosine =
+          p == 0 ? 1.f : std::cos(float(p * twoPi * (float)i / (float)fftSize));
+       w[i] += sign * a * cosine;
+       sqw[i] = w[i] * w[i];
+       ++p;
+       sign *= -1.f;
+    }
   }
 
   d->peak_index.reserve(_numBins);
@@ -169,7 +191,6 @@ void TimeAndPitch::reset()
     d->inCircularBuffer[ch].reset();
     d->outCircularBuffer[ch].reset();
   }
-  d->normalizationBuffer.reset();
   d->last_norm.zeroOut();
   d->last_phase.zeroOut();
   d->phase_accum.zeroOut();
@@ -386,15 +407,9 @@ void TimeAndPitch::_process_hop(int hop_a, int hop_s)
       vo::multiply(d->fft_timeseries.getPtr(ch), d->sqWindow.getPtr(0), d->fft_timeseries.getPtr(ch), fftSize);
   }
 
-  {
-    float gainFact = float(_timeStretch * ((8.f / 3.f) / _overlap_a)); // overlap add normalization factor
-    for (int ch = 0; ch < _numChannels; ++ch)
-      d->outCircularBuffer[ch].writeAddBlockWithGain(_outBufferWriteOffset, fftSize, d->fft_timeseries.getPtr(ch),
-                                                     gainFact);
-
-    if (normalize_window)
-      d->normalizationBuffer.writeAddBlockWithGain(_outBufferWriteOffset, fftSize, d->sqWindow.getPtr(0), gainFact);
-  }
+  for (int ch = 0; ch < _numChannels; ++ch)
+     d->outCircularBuffer[ch].writeAddBlockWithGain(
+        _outBufferWriteOffset, fftSize, d->fft_timeseries.getPtr(ch), _gainFact);
   _outBufferWriteOffset += hop_s;
   _availableOutputSamples += hop_s;
 }
@@ -407,11 +422,12 @@ void TimeAndPitch::setTimeStretchAndPitchFactor(double timeScale, double pitchFa
   _timeStretch = timeScale * pitchFactor;
 
   _overlap_a = overlap;
-  double overlap_s = overlap;
+  double overlap_s = _overlap_a;
   if (_timeStretch > 1.0 || !modulate_synthesis_hop)
     _overlap_a *= _timeStretch;
   else
     overlap_s /= _timeStretch;
+  _gainFact = getSynthesisScalar(overlap_s);
 
   d->exact_hop_a = double(fftSize) / _overlap_a;
   if (!modulate_synthesis_hop)
@@ -483,21 +499,8 @@ void TimeAndPitch::retrieveAudio(float* const* out_smp, int numSamples)
   for (int ch = 0; ch < _numChannels; ++ch)
   {
     d->outCircularBuffer[ch].readAndClearBlock(0, numSamples, out_smp[ch]);
-    if (normalize_window)
-    {
-      constexpr float curve =
-          4.f * 4.f; // the curve approximates 1/x over 1 but fades to 0 near 0 to avoid fade-in clicks
-      for (int i = 0; i < numSamples; ++i)
-      {
-        float x = d->normalizationBuffer.read(i);
-        out_smp[ch][i] *= x / (x * x + 1 / curve);
-      }
-    }
     d->outCircularBuffer[ch].advance(numSamples);
   }
-
-  d->normalizationBuffer.clearBlock(0, numSamples);
-  d->normalizationBuffer.advance(numSamples);
 
   _outBufferWriteOffset -= numSamples;
   _availableOutputSamples -= numSamples;
