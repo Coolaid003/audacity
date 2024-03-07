@@ -2904,7 +2904,7 @@ void WaveTrack::HandleXMLEndTag(const std::string_view&  WXUNUSED(tag))
 #endif
 }
 
-XMLTagHandler *WaveTrack::HandleXMLChild(const std::string_view& tag)
+XMLTagHandlerBase *WaveTrack::HandleXMLChild(const std::string_view& tag)
 {
    if ( auto pChild = WaveTrackIORegistry::Get()
           .CallObjectAccessor(tag, *this) )
@@ -2913,8 +2913,7 @@ XMLTagHandler *WaveTrack::HandleXMLChild(const std::string_view& tag)
    //
    // This is legacy code (1.2 and previous) and is not called for NEW projects!
    //
-   if (tag == "sequence" || tag == "envelope")
-   {
+   if (tag == "sequence" || tag == "envelope") {
       // This is a legacy project, so set the cached offset
       NewestOrNewClip()->SetSequenceStartTime(mLegacyProjectFileOffset);
 
@@ -2927,8 +2926,7 @@ XMLTagHandler *WaveTrack::HandleXMLChild(const std::string_view& tag)
 
    // JKC... for 1.1.0, one step better than what we had, but still badly broken.
    // If we see a waveblock at this level, we'd better generate a sequence.
-   if (tag == "waveblock")
-   {
+   if (tag == "waveblock") {
       // This is a legacy project, so set the cached offset
       NewestOrNewClip()->SetSequenceStartTime(mLegacyProjectFileOffset);
       Sequence *pSeq = NewestOrNewClip()->GetSequence(0);
@@ -2938,8 +2936,7 @@ XMLTagHandler *WaveTrack::HandleXMLChild(const std::string_view& tag)
    //
    // This is for the NEW file format (post-1.2)
    //
-   if (tag == "waveclip")
-   {
+   if (tag == "waveclip") {
       // Make clips (which don't serialize the rate) consistent with channel rate,
       // though the consistency check of channels with each other remains to do.
       // Not all `WaveTrackData` fields are properly initialized by now,

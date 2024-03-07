@@ -641,7 +641,7 @@ void WaveClip::HandleXMLEndTag(const std::string_view& tag)
    assert(CheckInvariants());
 }
 
-XMLTagHandler *WaveClip::HandleXMLChild(const std::string_view& tag)
+XMLTagHandlerBase *WaveClip::HandleXMLChild(const std::string_view& tag)
 {
    auto &pFirst = mSequences[0];
    if (tag == "sequence") {
@@ -651,8 +651,7 @@ XMLTagHandler *WaveClip::HandleXMLChild(const std::string_view& tag)
    }
    else if (tag == "envelope")
       return mEnvelope.get();
-   else if (tag == "waveclip")
-   {
+   else if (tag == "waveclip") {
       // Nested wave clips are cut lines
       auto format = pFirst->GetSampleFormats().Stored();
       // The format is not stored in WaveClip itself but passed to
@@ -667,7 +666,7 @@ XMLTagHandler *WaveClip::HandleXMLChild(const std::string_view& tag)
       return mCutLines.back().get();
    }
    else
-      return NULL;
+      return nullptr;
 }
 
 void WaveClip::WriteXML(XMLWriter &xmlFile) const
