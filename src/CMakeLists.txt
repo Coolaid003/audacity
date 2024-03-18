@@ -56,6 +56,8 @@ set( USE_VST ${${_OPT}use_vst} CACHE INTERNAL "" )
 #
 list( APPEND SOURCES
    PRIVATE
+      AILA.cpp
+      AILA.h
       ActiveProject.cpp
       ActiveProject.h
       AboutDialog.cpp
@@ -109,6 +111,8 @@ list( APPEND SOURCES
       FrameStatisticsDialog.h
       FreqWindow.cpp
       FreqWindow.h
+      Goniometer.cpp
+      Goniometer.h
       HelpUtilities.cpp
       HelpUtilities.h
       HistoryWindow.cpp
@@ -141,6 +145,8 @@ list( APPEND SOURCES
       MouseWheelHandler.cpp
       MovableControl.cpp
       MovableControl.h
+      PeakAndRmsMeter.cpp
+      PeakAndRmsMeter.h
       PitchName.cpp
       PitchName.h
       PluginRegistrationDialog.cpp
@@ -758,6 +764,8 @@ list( APPEND SOURCES
       tracks/playabletrack/wavetrack/ui/WaveTrackControls.cpp
       tracks/playabletrack/wavetrack/ui/WaveTrackControls.h
       tracks/playabletrack/wavetrack/ui/WaveTrackMenuItems.cpp
+      tracks/playabletrack/wavetrack/ui/WaveTrackMeter.cpp
+      tracks/playabletrack/wavetrack/ui/WaveTrackMeter.h
       tracks/playabletrack/wavetrack/ui/WaveTrackShifter.cpp
       tracks/playabletrack/wavetrack/ui/WaveTrackSliderHandles.cpp
       tracks/playabletrack/wavetrack/ui/WaveTrackSliderHandles.h
@@ -872,6 +880,8 @@ list( APPEND SOURCES
       widgets/LinearUpdater.h
       widgets/LogarithmicUpdater.cpp
       widgets/LogarithmicUpdater.h
+      widgets/MeterPainter.cpp
+      widgets/MeterPainter.h
       widgets/MeterPanel.cpp
       widgets/MeterPanel.h
       widgets/MeterPanelBase.cpp
