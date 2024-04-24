@@ -123,9 +123,19 @@ It handles initialization and termination by subclassing wxApp.
 #include "NetworkManager.h"
 #endif
 
-#ifdef EXPERIMENTAL_EASY_CHANGE_KEY_BINDINGS
+namespace Experimental {
+/*
+ PRL 5 Jan 2018
+ Easy change of keystroke bindings for menu items
+
+ PRL disabled 31 Aug 2021 because, at least on Mac, it misfires the
+ preference dialog whenever any keystroke shortcuts with Shift+ are used
+ EASY_CHANGE_KEY_BINDINGS
+ */
+constexpr bool EasyChangeKeyBindings = false;
+}
+
 #include "prefs/KeyConfigPrefs.h"
-#endif
 
 //temporarily commented out till it is added to all projects
 //#include "Profiler.h"
@@ -141,9 +151,7 @@ It handles initialization and termination by subclassing wxApp.
 #include "CrashpadConfigurer.h"
 #endif
 
-#ifdef EXPERIMENTAL_SCOREALIGN
 #include "effects/ScoreAlignDialog.h"
-#endif
 
 #if 0
 #ifdef _DEBUG
@@ -564,9 +572,8 @@ static void QuitAudacity(bool bForce)
 
    ModuleManager::Get().Dispatch(AppQuiting);
 
-#ifdef EXPERIMENTAL_SCOREALIGN
-   CloseScoreAlignDialog();
-#endif
+   if constexpr (Experimental::ScoreAlign)
+      CloseScoreAlignDialog();
 
    // Logger window is always destroyed on macOS,
    // on other platforms - it prevents the runloop
@@ -1676,25 +1683,25 @@ bool AudacityApp::InitPart2()
    mTimer.SetOwner(this, kAudacityAppTimerID);
    mTimer.Start(200);
 
-#ifdef EXPERIMENTAL_EASY_CHANGE_KEY_BINDINGS
-   static CommandManager::GlobalMenuHook::Scope scope{
-   [](const CommandID &id){
-      if (::wxGetMouseState().ShiftDown()) {
-         // Only want one page of the preferences
-         PrefsPanel::Factories factories;
-         factories.push_back(KeyConfigPrefsFactory( id ));
-         const auto pProject = GetActiveProject().lock();
-         auto pWindow = FindProjectFrame( pProject.get() );
-         // pProject may be null
-         GlobalPrefsDialog dialog( pWindow, pProject.get(), factories );
-         dialog.ShowModal();
-         MenuCreator::RebuildAllMenuBars();
-         return true;
-      }
-      else
-         return false;
-   } };
-#endif
+   if constexpr (Experimental::EasyChangeKeyBindings) {
+      static CommandManager::GlobalMenuHook::Scope scope{
+      [](const CommandID &id){
+         if (::wxGetMouseState().ShiftDown()) {
+            // Only want one page of the preferences
+            PrefsPanel::Factories factories;
+            factories.push_back(KeyConfigPrefsFactory( id ));
+            const auto pProject = GetActiveProject().lock();
+            auto pWindow = FindProjectFrame( pProject.get() );
+            // pProject may be null
+            GlobalPrefsDialog dialog( pWindow, pProject.get(), factories );
+            dialog.ShowModal();
+            MenuCreator::RebuildAllMenuBars();
+            return true;
+         }
+         else
+            return false;
+      } };
+   }
 
 #if defined(__WXMAC__)
    // The first time this version of Audacity is run or when the preferences

@@ -352,8 +352,6 @@ list( APPEND SOURCES
       effects/EffectUIServices.h
       effects/Equalization.cpp
       effects/Equalization.h
-      effects/Equalization48x.cpp
-      effects/Equalization48x.h
       effects/EqualizationBandSliders.cpp
       effects/EqualizationBandSliders.h
       effects/EqualizationCurves.cpp
@@ -931,8 +929,6 @@ list( APPEND SOURCES
           update/NoUpdatesAvailableDialog.h
           update/NoUpdatesAvailableDialog.cpp
       >
-
-      Experimental.cmake
 )
 
 #
@@ -1020,6 +1016,8 @@ set( LIBRARIES
       $<$<BOOL:${USE_SBSMS}>:libsbsms>
       $<$<BOOL:${USE_SOUNDTOUCH}>:soundtouch>
       $<$<BOOL:${USE_VAMP}>:libvamp>
+      $<$<BOOL:${USE_SCOREALIGN}>:libscorealign>
+      $<$<BOOL:${USE_PORTSMF}>:portsmf>
       $<$<PLATFORM_ID:Linux,FreeBSD,OpenBSD,NetBSD,CYGWIN>:PkgConfig::GLIB>
       $<$<PLATFORM_ID:Linux,FreeBSD,OpenBSD,NetBSD,CYGWIN>:PkgConfig::GTK>
       $<$<TARGET_EXISTS:Threads::Threads>:Threads::Threads>

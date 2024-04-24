@@ -109,16 +109,8 @@ public:
    wxBrush beatStrongSelBrush;
    wxBrush beatWeakSelBrush;
 
-#ifdef EXPERIMENTAL_FFT_Y_GRID
-   bool fftYGridOld;
-#endif //EXPERIMENTAL_FFT_Y_GRID
-
-#ifdef EXPERIMENTAL_FIND_NOTES
-   bool fftFindNotesOld;
-   int findNotesMinAOld;
-   int findNotesNOld;
-   bool findNotesQuantizeOld;
-#endif
+   // Experimental::FftYGrid
+   bool fftYGridOld{};
 
    const SelectedRegion *pSelectedRegion{};
    ZoomInfo *pZoomInfo{};
@@ -129,6 +121,12 @@ public:
    bool drawSliders{ false };
    bool onBrushTool{ false };
    bool hasSolo{ false };
+
+   // These are for Experimental::FindNotes
+   bool fftFindNotesOld{};
+   int findNotesMinAOld{};
+   int findNotesNOld{};
+   bool findNotesQuantizeOld{};
 };
 
 #endif                          // define __AUDACITY_TRACKARTIST__

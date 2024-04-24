@@ -182,16 +182,8 @@ public:
    };
    Algorithm algorithm;
 
-#ifdef EXPERIMENTAL_FFT_Y_GRID
-   bool fftYGrid;
-#endif //EXPERIMENTAL_FFT_Y_GRID
-
-#ifdef EXPERIMENTAL_FIND_NOTES
-   bool fftFindNotes;
-   double findNotesMinA;
-   int numberOfMaxima;
-   bool findNotesQuantize;
-#endif //EXPERIMENTAL_FIND_NOTES
+   // Experimental::FftYGrid
+   bool fftYGrid{};
 
    // Following fields are derived from preferences.
 
@@ -202,6 +194,12 @@ public:
    // Two other windows for computing reassigned spectrogram
    Floats         tWindow; // Window times time parameter
    Floats         dWindow; // Derivative of window
+
+   // These are for Experimental::FindNotes
+   bool fftFindNotes{};
+   double findNotesMinA{};
+   int numberOfMaxima{};
+   bool findNotesQuantize{};
 };
 
 extern AUDACITY_DLL_API IntSetting SpectrumMaxFreq;
@@ -227,6 +225,7 @@ public:
    PointerType Clone() const override;
 
    void GetBounds(const WaveChannel &wc, float &min, float &max) const;
+   std::pair<float, float> GetBounds(const WaveChannel &wt) const;
 
    void SetBounds(float min, float max)
    { mSpectrumMin = min, mSpectrumMax = max; }

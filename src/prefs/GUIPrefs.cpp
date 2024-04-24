@@ -23,6 +23,7 @@
 #include <wx/defs.h>
 #include <mutex> // once_flag
 
+#include "Experimental.h"
 #include "FileNames.h"
 #include "Languages.h"
 #include "Theme.h"
@@ -164,13 +165,12 @@ void GUIPrefs::PopulateOrExchange(ShuttleGui & S)
       S.TieCheckBox(XXO("Show e&xtra menus"),
                     {wxT("/GUI/ShowExtraMenus"),
                      false});
-#ifdef EXPERIMENTAL_THEME_PREFS
-      // We do not want to make this option mainstream.  It's a
-      // convenience for developers.
-      S.TieCheckBox(XXO("Show alternative &styling (Mac vs PC)"),
-                    {wxT("/GUI/ShowMac"),
-                     false});
-#endif
+      if constexpr (Experimental::ThemePrefs)
+         // We do not want to make this option mainstream.  It's a
+         // convenience for developers.
+         S.TieCheckBox(XXO("Show alternative &styling (Mac vs PC)"),
+                       {wxT("/GUI/ShowMac"),
+                        false});
       S.TieCheckBox(XXO("&Beep on completion of longer activities"),
                     {wxT("/GUI/BeepOnCompletion"),
                      false});
@@ -183,11 +183,10 @@ void GUIPrefs::PopulateOrExchange(ShuttleGui & S)
          {"/GUI/RtlWorkaround",
           true});
 #endif
-#ifdef EXPERIMENTAL_CEE_NUMBERS_OPTION
-      S.TieCheckBox(XXO("Never use comma as decimal point"),
-                    {wxT("/Locale/CeeNumberFormat"),
-                     false});
-#endif
+      if constexpr (Experimental::CeeNumbersOption)
+         S.TieCheckBox(XXO("Never use comma as decimal point"),
+                       {wxT("/Locale/CeeNumberFormat"),
+                        false});
    }
    S.EndStatic();
    
