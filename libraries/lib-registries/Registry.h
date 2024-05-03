@@ -39,29 +39,49 @@ namespace Registry {
    struct OrderingHint
    {
       /*!
-       The default Unspecified hint is just like End, except that in case the
+       The default Unspecified hint is just like End, but is overridden if the
        item is delegated to (by an IndirectItem, ComputedItem, or anonymous
-       group), the delegating item's hint will be used instead
+       group).  The delegating item's hint will be used instead
        */
       enum Type : int {
-         Before, After,
          Begin, End,
+         Before, After,
          Unspecified // keep this last
       } type;
+
+      //! What to do in case a registered SingleItem is at the same path as a
+      //! predefined SingleItem
+      /*
+       The default None policy is like Error, but is overridden if the
+       item is delegated to (by a SharedItem, ComputedItem, or nameless
+       transparent group).  The delegating item's hint will be used instead
+       */
+      enum ConflictResolutionPolicy : int {
+         Error,   /*!<
+            By default, ignore the registered item and display an error */
+         Ignore,  //!< Yield to any other item
+         Replace, /*!<
+            At most one registered SingleItem may replace the predefined
+            without error */
+         None
+      } policy{ None };
 
       // name of some other BaseItem; significant only when type is Before or
       // After:
       Identifier name;
 
-      OrderingHint(Type type = Unspecified, const wxString &name = {})
-         : type{ type }, name{ name } {}
+      OrderingHint(Type type = Unspecified,
+         const wxString &name = {}, ConflictResolutionPolicy policy = Error)
+         : type{ type }, name{ name }, policy{ policy } {}
 
+      //! The conflict resolution policy is not significant in equality
+      //! comparison
       bool operator == ( const OrderingHint &other ) const
       { return name == other.name && type == other.type; }
 
+      /*! This sorts unspecified placements later */
       bool operator < ( const OrderingHint &other ) const
       {
-         // This sorts unspecified placements later
          return std::make_pair( type, name ) <
             std::make_pair( other.type, other.name );
       }
@@ -75,6 +95,7 @@ namespace Registry {
 namespace detail { using namespace TypeList;
    struct GroupItemBase;
 
+   // Application code MUST NOT define any new direct subclasses of BaseItem
    struct REGISTRIES_API BaseItem {
       // declare at least one virtual function so dynamic_cast will work
       explicit
@@ -89,17 +110,17 @@ namespace detail { using namespace TypeList;
    };
 
    using BaseItemPtr = std::unique_ptr<BaseItem>;
-
-   using BaseItemSharedPtr = std::shared_ptr<BaseItem>;
+using BaseItemSharedPtr = std::shared_ptr<BaseItem>;
+using ConstBaseItemSharedPtr = std::shared_ptr<const BaseItem>;
 
    struct REGISTRIES_API IndirectItemBase : BaseItem {
-      explicit IndirectItemBase(const BaseItemSharedPtr &ptr)
+      explicit IndirectItemBase(const ConstBaseItemSharedPtr &ptr)
          : BaseItem{ wxEmptyString }
          , ptr{ ptr }
       {}
       ~IndirectItemBase() override;
 
-      BaseItemSharedPtr ptr;
+      ConstBaseItemSharedPtr ptr;
    };
 
    struct ComputedItemBase;
@@ -196,6 +217,8 @@ namespace detail {
    /*!
     The name of the substitute is significant for path calculations, but the
     ComputedItem's ordering hint is used if the substitute has none
+    It expects a certain Visitor subtype as context for the function, but
+    which type that is -- is type-erased
     */
    template<typename Context, typename Item>
    struct ComputedItem final : ComputedItemBase {
@@ -361,12 +384,14 @@ namespace detail {
    };
 }
 
-   // registry collects items, before consulting preferences and ordering
-   // hints, and applying the merge procedure to them.
-   // This function puts one more item into the registry.
-   // The sequence of calls to RegisterItem has no significance for
-   // determining the visitation ordering.  When sequence is important, register
-   // a GroupItem.
+   /*!
+    Registry collects items, before consulting preferences and ordering
+    hints, and applying the merge procedure to them.
+    This function puts one more item into the registry.
+    The sequence of calls to RegisterItem has no significance for
+    determining the visitation ordering.  When sequence is important, use an
+    OrderingHint in placement.
+    */
    template<typename RegistryTraits, typename Item>
    void RegisterItem(GroupItem<RegistryTraits> &registry,
       const Placement &placement, std::unique_ptr<Item> pItem)
@@ -542,11 +567,20 @@ namespace detail {
          const = 0;
    };
 
-   REGISTRIES_API void Visit(
-      VisitorBase &visitor,
-      const GroupItemBase *pTopItem,
-      const GroupItemBase *pRegistry,
-      void *pComputedItemContext);
+   struct REGISTRIES_API VisitBase {
+      using Path = std::vector<Identifier>;
+
+      //! Extends the lifetimes of computed items created by Visit() until
+      //! this is destroyed
+      std::vector<detail::BaseItemSharedPtr> computedItems;
+      Path path;
+
+      void DoVisit(const VisitorBase &visitor,
+        const GroupItemBase *pTopItem,
+        const GroupItemBase *pRegistry,
+        void *pComputedItemContext);
+   };
+
 
    //! Type-erasing adapter class (with no std::function overhead)
    /*!
@@ -592,7 +626,15 @@ namespace detail {
     seen in the registry for the first time is placed somewhere, and that
     ordering should be kept the same thereafter in later runs (which may add
     yet other previously unknown items).
+    Computed registry items' lifetimes last until state is destroyed or
+    passed again to Visit().
 
+    This object does the work in its constructor, and extends the lifetimes of
+    computed items until it is destroyed
+    */
+   template<typename RegistryTraits, typename Visitors>
+   struct Visit : detail::VisitBase {
+      /*
     @param visitors A tuple of size 1 or 3, or a callable.
       - If a triple, the first member is for pre-visit of group nodes, the last
          is for post-visit, and the middle for leaf visits.
@@ -604,41 +646,49 @@ namespace detail {
     GroupItem<RegistryTraits> or a const SingleItem subtype, and the path up to
     its parent node.
     @param computedItemContext is passed to factory functions of computed items
-    */
-   template<typename RegistryTraits, typename Visitors>
-   void Visit(const Visitors &visitors,
-      const GroupItem<RegistryTraits> *pTopItem,
-      const GroupItem<RegistryTraits> *pRegistry = {},
-      typename RegistryTraits::ComputedItemContextType &computedItemContext =
-         RegistryTraits::ComputedItemContextType::Instance)
-   {
-      static_assert(AcceptableTraits_v<RegistryTraits>);
-      detail::Visitor<RegistryTraits, Visitors> visitor{ visitors };
-      detail::Visit(visitor, pTopItem, pRegistry, &computedItemContext);
-   }
+       */
+      Visit(const Visitors &visitors,
+         const GroupItem<RegistryTraits> *pTopItem,
+         const GroupItem<RegistryTraits> *pRegistry = {},
+         typename RegistryTraits::ComputedItemContextType &computedItemContext =
+            RegistryTraits::ComputedItemContextType::Instance)
+      {
+         static_assert(AcceptableTraits_v<RegistryTraits>);
+         auto visitor = detail::Visitor<RegistryTraits, Visitors>{ visitors };
+         DoVisit(visitor, pTopItem, pRegistry, &computedItemContext);
+      }
+   };
 
    //! @copydoc Visit
    //! Like Visit but passing function(s) wrapped in std::function
    template<typename RegistryTraits>
-   void VisitWithFunctions(const VisitorFunctions<RegistryTraits> &visitors,
-      const GroupItem<RegistryTraits> *pTopItem,
-      const GroupItem<RegistryTraits> *pRegistry = {},
-      typename RegistryTraits::ComputedItemContextType &computedItemContext =
-         RegistryTraits::ComputedItemContextType::Instance)
-   {
-      static_assert(AcceptableTraits_v<RegistryTraits>);
-      Variant::Visit([&](auto &&visitor){
-         Visit(visitor, pTopItem, pRegistry, computedItemContext);
-      }, visitors);
-   }
+   struct VisitWithFunctions : detail::VisitBase {
+      VisitWithFunctions(const VisitorFunctions<RegistryTraits> &visitors,
+         const GroupItem<RegistryTraits> *pTopItem,
+         const GroupItem<RegistryTraits> *pRegistry = {},
+         typename RegistryTraits::ComputedItemContextType &computedItemContext =
+            RegistryTraits::ComputedItemContextType::Instance)
+      {
+         static_assert(AcceptableTraits_v<RegistryTraits>);
+         Variant::Visit([&](auto &&visitor){
+            using V = std::remove_const_t<
+               std::remove_reference_t<decltype(visitor)>>;
+            auto vis =
+               detail::Visitor<RegistryTraits, V>{ visitor };
+            DoVisit(vis, pTopItem, pRegistry, &computedItemContext);
+         }, visitors);
+      }
+   };
 
-   // Typically a static object.  Constructor initializes certain preferences
-   // if they are not present.  These preferences determine an extrinsic
-   // visitation ordering for registered items.  This is needed in some
-   // places that have migrated from a system of exhaustive listings, to a
-   // registry of plug-ins, and something must be done to preserve old
-   // behavior.  It can be done in the central place using string literal
-   // identifiers only, not requiring static compilation or linkage dependency.
+   /*
+    Typically a static object.  Constructor or operator() initializes certain
+    preferences if they are not present.  These preferences determine an
+    extrinsic visitation ordering for registered items.  This is needed in
+    some places that have migrated from a system of exhaustive listings, to a
+    registry of plug-ins, and something must be done to preserve old
+    behavior.  It can be done in the central place using string literal
+    identifiers only, not requiring static compilation or linkage dependency.
+    */
    struct REGISTRIES_API
    OrderingPreferenceInitializer : PreferenceInitializer {
       using Literal = const wxChar *;
@@ -653,7 +703,7 @@ namespace detail {
          // desired ordering at one node of the tree:
          Pairs pairs );
 
-      void operator () () override;
+      void operator () () final;
 
    private:
       Pairs mPairs;
