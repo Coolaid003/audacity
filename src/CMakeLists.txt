@@ -46,13 +46,6 @@ else()
    file( WRITE "${_PRVDIR}/RevisionIdent.h" "" )
 endif()
 
-# Handle VST option
-cmd_option(
-   ${_OPT}use_vst
-   "Use VST2 plug-in support [on, off]"
-   ON
-)
-set( USE_VST ${${_OPT}use_vst} CACHE INTERNAL "" )
 
 #
 #
@@ -310,38 +303,12 @@ set( SOURCES
 
       # Built-in Effects
 
-      effects/Amplify.cpp
-      effects/Amplify.h
       effects/AnalysisTracks.cpp
       effects/AnalysisTracks.h
-      effects/AutoDuck.cpp
-      effects/AutoDuck.h
       effects/BasicEffectUIServices.cpp
       effects/BasicEffectUIServices.h
-      effects/BassTreble.cpp
-      effects/BassTreble.h
-      effects/Biquad.cpp
-      effects/Biquad.h
-      effects/ChangePitch.cpp
-      effects/ChangePitch.h
-      effects/ChangeSpeed.cpp
-      effects/ChangeSpeed.h
-      effects/ChangeTempo.cpp
-      effects/ChangeTempo.h
-      effects/ClickRemoval.cpp
-      effects/ClickRemoval.h
-      effects/Compressor.cpp
-      effects/Compressor.h
       effects/Contrast.cpp
       effects/Contrast.h
-      effects/Distortion.cpp
-      effects/Distortion.h
-      effects/DtmfGen.cpp
-      effects/DtmfGen.h
-      effects/EBUR128.cpp
-      effects/EBUR128.h
-      effects/Echo.cpp
-      effects/Echo.h
       effects/EffectEditor.cpp
       effects/EffectEditor.h
       effects/EffectManager.cpp
@@ -353,67 +320,12 @@ set( SOURCES
       effects/EffectUI.h
       effects/EffectUIServices.cpp
       effects/EffectUIServices.h
-      effects/Equalization.cpp
-      effects/Equalization.h
-      effects/Equalization48x.cpp
-      effects/Equalization48x.h
-      effects/EqualizationBandSliders.cpp
-      effects/EqualizationBandSliders.h
-      effects/EqualizationCurves.cpp
-      effects/EqualizationCurves.h
-      effects/EqualizationCurvesDialog.cpp
-      effects/EqualizationCurvesDialog.h
-      effects/EqualizationCurvesList.cpp
-      effects/EqualizationCurvesList.h
-      effects/EqualizationFilter.cpp
-      effects/EqualizationFilter.h
-      effects/EqualizationPanel.cpp
-      effects/EqualizationPanel.h
-      effects/EqualizationParameters.cpp
-      effects/EqualizationParameters.h
-      effects/EqualizationUI.cpp
-      effects/EqualizationUI.h
-      effects/Fade.cpp
-      effects/Fade.h
-      effects/FindClipping.cpp
-      effects/FindClipping.h
       effects/Generator.cpp
       effects/Generator.h
-      effects/Invert.cpp
-      effects/Invert.h
-      effects/Loudness.cpp
-      effects/Loudness.h
-      effects/Noise.cpp
-      effects/Noise.h
-      effects/NoiseReduction.cpp
-      effects/NoiseReduction.h
-      effects/Normalize.cpp
-      effects/Normalize.h
-      effects/Paulstretch.cpp
-      effects/Paulstretch.h
-      effects/Phaser.cpp
-      effects/Phaser.h
       effects/RealtimeEffectStateUI.h
       effects/RealtimeEffectStateUI.cpp
-      effects/Repair.cpp
-      effects/Repair.h
-      effects/Repeat.cpp
-      effects/Repeat.h
-      effects/Reverb.cpp
-      effects/Reverb.h
-      effects/Reverb_libSoX.h
-      effects/Reverse.cpp
-      effects/Reverse.h
-      effects/SBSMSEffect.cpp
-      effects/SBSMSEffect.h
-      effects/ScienFilter.cpp
-      effects/ScienFilter.h
       effects/ScoreAlignDialog.cpp
       effects/ScoreAlignDialog.h
-      effects/Silence.cpp
-      effects/Silence.h
-      effects/SoundTouchEffect.cpp
-      effects/SoundTouchEffect.h
       effects/StatefulEffect.cpp
       effects/StatefulEffect.h
       effects/StatefulEffectUIServices.cpp
@@ -422,125 +334,8 @@ set( SOURCES
       effects/StatefulPerTrackEffect.h
       effects/StatelessPerTrackEffect.cpp
       effects/StatelessPerTrackEffect.h
-      effects/StereoToMono.cpp
-      effects/StereoToMono.h
-      effects/TimeScale.cpp
-      effects/TimeScale.h
-      effects/ToneGen.cpp
-      effects/ToneGen.h
-      effects/TruncSilence.cpp
-      effects/TruncSilence.h
       effects/TwoPassSimpleMono.cpp
       effects/TwoPassSimpleMono.h
-      effects/Wahwah.cpp
-      effects/Wahwah.h
-
-      # VST Effects
-
-      $<$<BOOL:${USE_VST}>:
-         effects/VST/VSTControl.h
-         effects/VST/VSTEditor.cpp
-         effects/VST/VSTEditor.h
-         effects/VST/VSTEffect.cpp
-         effects/VST/VSTEffect.h
-         effects/VST/VSTEffectOptionsDialog.cpp
-         effects/VST/VSTEffectOptionsDialog.h
-      >
-
-      $<$<AND:$<BOOL:${USE_VST}>,$<BOOL:${wxIS_GTK}>>:
-         effects/VST/VSTControlGTK.cpp
-         effects/VST/VSTControlGTK.h
-      >
-
-      $<$<AND:$<BOOL:${USE_VST}>,$<BOOL:${wxIS_WIN}>>:
-         effects/VST/VSTControlMSW.cpp
-         effects/VST/VSTControlMSW.h
-      >
-
-      $<$<AND:$<BOOL:${USE_VST}>,$<BOOL:${wxIS_MAC}>>:
-         effects/VST/VSTControlOSX.h
-         effects/VST/VSTControlOSX.mm
-      >
-
-      $<$<BOOL:${${_OPT}has_vst3}>:
-         effects/VST3/VST3Editor.cpp
-         effects/VST3/VST3Editor.h
-         effects/VST3/VST3Effect.h
-         effects/VST3/VST3Effect.cpp
-         effects/VST3/VST3OptionsDialog.h
-         effects/VST3/VST3OptionsDialog.cpp
-         effects/VST3/VST3ParametersWindow.h
-         effects/VST3/VST3ParametersWindow.cpp
-         effects/VST3/internal/PlugFrame.h
-         effects/VST3/internal/PlugFrame.cpp
-      >
-
-      $<$<AND:$<BOOL:${${_OPT}has_vst3}>,$<BOOL:${wxIS_GTK}>>:
-         effects/VST3/internal/x11/RunLoop.h
-         effects/VST3/internal/x11/RunLoop.cpp
-         effects/VST3/internal/x11/PlugFrame.h
-         effects/VST3/internal/x11/PlugFrame.cpp
-         effects/VST3/internal/x11/SocketWindow.h
-         effects/VST3/internal/x11/SocketWindow.cpp
-      >
-
-      # Audio Unit Effects
-
-      $<$<AND:$<BOOL:${USE_AUDIO_UNITS}>,$<BOOL:${wxIS_MAC}>>:
-         effects/audiounits/AUControl.h
-         effects/audiounits/AUControl.mm
-         effects/audiounits/AudioUnitEditor.cpp
-         effects/audiounits/AudioUnitEditor.h
-         effects/audiounits/AudioUnitEffect.cpp
-         effects/audiounits/AudioUnitEffect.h
-         effects/audiounits/AudioUnitEffectOptionsDialog.cpp
-         effects/audiounits/AudioUnitEffectOptionsDialog.h
-      >
-
-      # Ladspa Effects
-
-      $<$<BOOL:${USE_LADSPA}>:
-         effects/ladspa/LadspaEditor.cpp
-         effects/ladspa/LadspaEditor.h
-         effects/ladspa/LadspaEffect.cpp
-         effects/ladspa/LadspaEffect.h
-	 effects/ladspa/LadspaEffectOptionsDialog.cpp
-	 effects/ladspa/LadspaEffectOptionsDialog.h
-      >
-
-      # LV2 Effects
-
-      $<$<BOOL:${USE_LV2}>:
-         effects/lv2/LV2Editor.cpp
-         effects/lv2/LV2Editor.h
-         effects/lv2/LV2Effect.cpp
-         effects/lv2/LV2Effect.h
-         effects/lv2/LV2EffectMeter.cpp
-         effects/lv2/LV2EffectMeter.h
-         effects/lv2/LV2PreferencesDialog.cpp
-         effects/lv2/LV2PreferencesDialog.h
-         effects/lv2/LV2UIFeaturesList.cpp
-         effects/lv2/LV2UIFeaturesList.h
-         effects/lv2/NativeWindow.h
-      >
-
-      # Nyquist Effects
-
-      $<$<BOOL:${USE_NYQUIST}>:
-         effects/nyquist/LoadNyquist.cpp
-         effects/nyquist/LoadNyquist.h
-         effects/nyquist/Nyquist.cpp
-         effects/nyquist/Nyquist.h
-      >
-
-      # VAMP Effects
-
-      $<$<BOOL:${USE_VAMP}>:
-         effects/vamp/LoadVamp.cpp
-         effects/vamp/LoadVamp.h
-         effects/vamp/VampEffect.cpp
-         effects/vamp/VampEffect.h
-      >
 
       # Export
 
@@ -1011,10 +806,6 @@ set( LIBRARIES
    PUBLIC
       ${CMAKE_REQUIRED_LIBRARIES}
       ZLIB::ZLIB
-      $<$<BOOL:${USE_NYQUIST}>:libnyquist>
-      $<$<BOOL:${USE_SBSMS}>:libsbsms>
-      $<$<BOOL:${USE_SOUNDTOUCH}>:soundtouch>
-      $<$<BOOL:${USE_VAMP}>:libvamp>
       $<$<PLATFORM_ID:Linux,FreeBSD,OpenBSD,NetBSD,CYGWIN>:PkgConfig::GLIB>
       $<$<PLATFORM_ID:Linux,FreeBSD,OpenBSD,NetBSD,CYGWIN>:PkgConfig::GTK>
       $<$<TARGET_EXISTS:Threads::Threads>:Threads::Threads>
@@ -1133,20 +924,11 @@ elseif( CMAKE_SYSTEM_NAME MATCHES "Darwin" )
       AudacityApp.mm
       KeyboardCapture.cpp
       effects/EffectUI.mm
-      effects/VST/VSTControlOSX.mm
-      effects/audiounits/AUControl.mm
       widgets/FileDialog/mac/FileDialogPrivate.mm
       PROPERTIES
          COMPILE_FLAGS "-x objective-c++"
          SKIP_PRECOMPILE_HEADERS YES
    )
-   if(${_OPT}has_vst3 AND ${wxIS_MAC})
-      set_source_files_properties(
-         effects/VST/VSTControlOSX.mm
-         PROPERTIES
-            SKIP_PRECOMPILE_HEADERS YES
-      )
-   endif()
 
    # Add our required frameworks
    list( APPEND LIBRARIES
@@ -1314,34 +1096,6 @@ set( AUDACITY_LIBRARIES
    lib-music-information-retrieval-interface
    lib-preference-pages-interface
 )
-
-if (USE_VST)
-   list( APPEND AUDACITY_LIBRARIES
-      lib-vst-interface
-   )
-endif()
-
-if (USE_LV2)
-   list( APPEND AUDACITY_LIBRARIES
-      lib-lv2-interface
-   )
-endif()
-
-if (${_OPT}use_ladspa)
-   list( APPEND AUDACITY_LIBRARIES
-      lib-ladspa-interface
-   )
-endif()
-
-if (${_OPT}has_vst3)
-   list( APPEND AUDACITY_LIBRARIES
-      lib-vst3-interface
-   )
-endif()
-
-if (USE_AUDIO_UNITS AND wxIS_MAC)
-   list(APPEND AUDACITY_LIBRARIES lib-audio-unit-interface)
-endif()
 
 if ( ${_OPT}has_networking )
    list( APPEND AUDACITY_LIBRARIES

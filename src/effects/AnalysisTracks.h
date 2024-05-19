@@ -47,6 +47,7 @@ private:
 };
 
 // Set name to given value if that is not empty, else use default name
+AUDACITY_DLL_API
 std::shared_ptr<AddedAnalysisTrack> AddAnalysisTrack(Effect &effect,
    const wxString &name = wxString());
 
@@ -78,7 +79,7 @@ private:
 };
 
 // Set name to given value if that is not empty, else use default name
-ModifiedAnalysisTrack ModifyAnalysisTrack(Effect &effect,
+AUDACITY_DLL_API ModifiedAnalysisTrack ModifyAnalysisTrack(Effect &effect,
    const LabelTrack &origTrack, const wxString &name = wxString());
 
 #endif

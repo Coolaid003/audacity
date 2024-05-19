@@ -84,7 +84,16 @@ static const std::unordered_set<wxString> &autoEnabledModules()
       "mod-aup",
       "mod-opus",
       "mod-midi-import-export",
-      "mod-cloud-audiocom"
+      "mod-cloud-audiocom",
+      "mod-soundtouch",
+      "mod-audiounit",
+      "mod-ladspa",
+      "mod-lv2",
+      "mod-vamp",
+      "mod-vst",
+      "mod-vst3",
+      "mod-effect-classes",
+      "mod-nyquist",
    };
    return modules;
 }

@@ -13,7 +13,7 @@
 #include "PerTrackEffect.h"
 #include "BasicEffectUIServices.h"
 
-class StatelessEffectUIServices
+class AUDACITY_DLL_API StatelessEffectUIServices
    : public BasicEffectUIServices
 {
 public:
@@ -32,7 +32,7 @@ public:
 };
 
 //! Simply the union of PerTrackEffect and StatelessEffectUIServices
-class StatelessPerTrackEffect
+class AUDACITY_DLL_API StatelessPerTrackEffect
    : public PerTrackEffect
    , public StatelessEffectUIServices
 {
