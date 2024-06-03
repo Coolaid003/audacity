@@ -34,6 +34,12 @@ const std::optional<double>& CompressorInstance::GetSampleRate() const
    return mSampleRate;
 }
 
+float CompressorInstance::GetLatencyMs() const
+{
+   return mSlaves.empty() ? mCompressor->GetSettings().lookaheadMs :
+                        mSlaves.front().mCompressor->GetSettings().lookaheadMs;
+}
+
 void CompressorInstance::SetOutputQueue(
    std::weak_ptr<DynamicRangeProcessorOutputPacketQueue> outputQueue)
 {
@@ -149,7 +155,11 @@ size_t CompressorInstance::RealtimeProcess(
       newPacket.indexOfFirstSample = slave.mSampleCounter;
       newPacket.numSamples = numProcessedSamples;
       newPacket.targetCompressionDb = targetCompressionDb;
-      newPacket.actualCompressionDb = frameStats.dbAttenuationOfMaxInputSample;
+      newPacket.actualCompressionDb = frameStats.dbGainOfMaxInputSample;
+      newPacket.inputDb = frameStats.maxInputSampleDb;
+      newPacket.outputDb =
+         frameStats.maxInputSampleDb + frameStats.dbGainOfMaxInputSample +
+         CompressorProcessor::GetMakeupGainDb(compressorSettings);
       queue->Put(newPacket);
    }
    slave.mSampleCounter += numProcessedSamples;
