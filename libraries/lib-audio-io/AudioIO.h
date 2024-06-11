@@ -9,7 +9,6 @@
   Use the PortAudio library to play and record sound
 
 **********************************************************************/
-
 #ifndef __AUDACITY_AUDIO_IO__
 #define __AUDACITY_AUDIO_IO__
 
@@ -17,6 +16,7 @@
 #include "AudioIOSequences.h"
 #include "PlaybackSchedule.h" // member variable
 
+#include <array>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -26,8 +26,8 @@
 
 #include "PluginProvider.h" // for PluginID
 #include "Observer.h"
-#include "SampleCount.h"
 #include "SampleFormat.h"
+#include "TimeQueue.h" // member variable
 
 class wxArrayString;
 class AudioIOBase;
@@ -173,15 +173,11 @@ public:
    // Part of the callback
    int CallbackDoSeek();
 
-   // Part of the callback
-   void CallbackCheckCompletion(
-      int &callbackReturn, unsigned long len);
-
    int mbHasSoloSequences;
-   int mCallbackReturn;
    // Helpers to determine if sequences have already been faded out.
    unsigned  CountSoloingSequences();
 
+   using OldChannelGains = std::array<float, 2>;
    bool SequenceShouldBeSilent(const PlayableSequence &ps);
 
    void CheckSoundActivatedRecordingLevel(
@@ -189,20 +185,27 @@ public:
       unsigned long framesPerBuffer
    );
 
-   bool FillOutputBuffers(
-      float *outputFloats,
-      unsigned long framesPerBuffer,
-      float *outputMeterFloats
-   );
-   void DrainInputBuffers(
+   //! Mix and copy to PortAudio's output buffer
+   //! from our intermediate playback buffers
+   /*!
+    @pre 'GetNumPlaybackChannels() > 0'
+    */
+   void FillOutputBuffers(
+      float *outputBuffer, size_t framesPerBuffer, size_t toGet);
+   void ApplyMasterGain(bool paused, float *outputFloats, size_t len);
+   //! @return whether recording is finished
+   bool DrainInputBuffers(
       constSamplePtr inputBuffer, 
       unsigned long framesPerBuffer,
       const PaStreamCallbackFlags statusFlags,
       float * tempFloats
    );
-   void UpdateTimePosition(
-      unsigned long framesPerBuffer
-   );
+   //! Update (in realtime thread) the cursor position seen by drawing code
+   //! (later in the main thread)
+   /*!
+    @return false when a stall in the time queue is detected
+    */
+   bool UpdateTimePosition(size_t frames);
    void DoPlaythrough(
       constSamplePtr inputBuffer, 
       float *outputBuffer,
@@ -217,15 +220,6 @@ public:
       const float *outputMeterFloats,
       unsigned long framesPerBuffer
    );
-
-   /** \brief Get the number of audio samples ready in all of the playback
-   * buffers.
-   *
-   * Returns the smallest of the buffer ready space values in the event that
-   * they are different. */
-   size_t GetCommonlyReadyPlayback();
-
-   size_t GetCommonlyWrittenForPlayback();
 
    /// How many frames of zeros were output due to pauses?
    long    mNumPauseFrames;
@@ -255,29 +249,33 @@ public:
    using RingBuffers = std::vector<std::unique_ptr<RingBuffer>>;
    RingBuffers mCaptureBuffers;
    RecordableSequences mCaptureSequences;
-   //!Buffers that hold outcome of transformations applied to each individual sample source.
-   //!Number of buffers equals to the sum of number all source channels.
-   std::vector<std::vector<float>> mProcessingBuffers;
-   //!These buffers are used to mix and process the result of processed source channels.
-   //!Number of buffers equals to number of output channels.
-   std::vector<std::vector<float>> mMasterBuffers;
-   /*! Read by worker threads but unchanging during playback */
-   RingBuffers mPlaybackBuffers;
-   ConstPlayableSequences      mPlaybackSequences;
-   // Old gain is used in playback in linearly interpolating
-   // the gain.
-   float mOldPlaybackGain;
+   // TODO more-than-two-channels
+   static constexpr size_t MaxPlaybackChannels = 2;
+   std::array<std::unique_ptr<RingBuffer>, MaxPlaybackChannels> mMasterBuffers;
+   //! @invariant `mpSequence && mpSequence->FindChannelGroup()`
+   struct AUDIO_IO_API Track {
+      const std::shared_ptr<const PlayableSequence> mpSequence;
+      std::unique_ptr<Mixer> mpMixer{};
+      std::unique_ptr<PlaybackState> mpState;
+      /*! Read by worker threads but unchanging during playback */
+      std::array<std::unique_ptr<RingBuffer>, MaxPlaybackChannels> mBuffers;
+      std::array<float, MaxPlaybackChannels> mOldChannelGains{};
+      bool mHasLatency{ false };
+
+      //! @pre `seq && seq->FindChannelGroup()`
+      Track(const std::shared_ptr<const PlayableSequence> &seq);
+      ~Track();
+      void ResetData();
+   };
+   std::vector<Track> mPlaybackTracks;
+   float mOldMasterGain{};
    // Temporary buffers, each as large as the playback buffers
    std::vector<SampleBuffer> mScratchBuffers;
    std::vector<float *> mScratchPointers; //!< pointing into mScratchBuffers
 
-   std::vector<std::unique_ptr<Mixer>> mPlaybackMixers;
-
    std::atomic<float>  mMixerOutputVol{ 1.0 };
    static int          mNextStreamToken;
    double              mFactor;
-   unsigned long       mMaxFramesOutput; // The actual number of frames output.
-   /*! Read by a worker thread but unchanging during playback */
    bool                mbMicroFades;
 
    double              mSeek;
@@ -332,6 +330,9 @@ public:
    PaError             mLastPaError;
 
 protected:
+   void OtherSynchronization(bool paused,
+      size_t framesPerBuffer, const PaStreamCallbackTimeInfo *timeInfo);
+
    static size_t MinValue(
       const RingBuffers &buffers, size_t (RingBuffer::*pmf)() const);
 
@@ -389,13 +390,22 @@ public:
    // detect more dropouts
    std::atomic<bool> mDetectUpstreamDropouts{ true };
 
+   size_t GetNumPlaybackChannels() const {
+      return std::min(mNumPlaybackChannels, MaxPlaybackChannels);
+   }
 protected:
    RecordingSchedule mRecordingSchedule{};
    PlaybackSchedule mPlaybackSchedule;
+   TimeQueue mTimeQueue;
+   std::unique_ptr<PlaybackState> mpState;
 
    struct TransportState;
    //! Holds some state for duration of playback or recording
    std::unique_ptr<TransportState> mpTransportState;
+
+   //! Whether the last visit of the callback found volume below the sound
+   //! activation threshold
+   bool mLastBelow{ false };
 
 private:
    /*!
@@ -520,7 +530,6 @@ public:
    wxArrayString GetInputSourceNames();
 
    sampleFormat GetCaptureFormat() { return mCaptureFormat; }
-   size_t GetNumPlaybackChannels() const { return mNumPlaybackChannels; }
    size_t GetNumCaptureChannels() const { return mNumCaptureChannels; }
 
    // Meaning really capturing, not just pre-rolling
@@ -608,20 +617,32 @@ private:
 
    //! First part of SequenceBufferExchange
    void FillPlayBuffers();
-
-   bool ProcessPlaybackSlices(
+   void PollUser(PlaybackState &state, size_t newFrames);
+   void ProcessPlaybackSlices(
+      std::optional<RealtimeEffects::ProcessingScope> &pScope, size_t demand);
+   //! @return how many samples were discarded for master stack's latency
+   size_t ProcessPlaybackSlicesPass(bool paused,
+      std::optional<RealtimeEffects::ProcessingScope> &pScope, size_t demand,
+      size_t preprocessed);
+   bool ConsumeFromMixers(bool paused, size_t demand, size_t preprocessed,
       std::optional<RealtimeEffects::ProcessingScope> &pScope,
-      size_t available);
+      std::optional<double> &debugPrevTime,
+      std::optional<double> &debugNextTime);
+   void ConsumeFromMixer(size_t frames, size_t toProduce,
+      Mixer &mixer, size_t nChannels,
+      std::unique_ptr<RingBuffer> playbackBuffers[]);
+   void TransformPlayBuffers(
+      std::optional<RealtimeEffects::ProcessingScope> &scope);
+   //! @return how many samples were discarded for latency
+   size_t ApplyEffectStack(
+      std::optional<RealtimeEffects::ProcessingScope> &scope,
+      const ChannelGroup *pGroup,
+      std::unique_ptr<RingBuffer> playbackBuffers[], size_t preprocessed);
+   void ApplyChannelGains();
+   void MixChannels(size_t demand);
 
    //! Second part of SequenceBufferExchange
    void DrainRecordBuffers();
-
-   /** \brief Get the number of audio samples free in all of the playback
-   * buffers.
-   *
-   * Returns the smallest of the buffer free space values in the event that
-   * they are different. */
-   size_t GetCommonlyFreePlayback();
 
    /** \brief Get the number of audio samples ready in all of the recording
     * buffers.
