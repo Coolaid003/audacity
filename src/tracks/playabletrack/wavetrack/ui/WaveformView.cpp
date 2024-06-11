@@ -284,6 +284,13 @@ public:
       }
    }
 
+   void SwapChannels() override
+   {
+      assert(mChannelCaches.size() == 2);
+      if(mChannelCaches.size() == 2)
+         std::swap(mChannelCaches[0], mChannelCaches[1]);
+   }
+
    void MarkChanged() noexcept override
    {
       //Triggered when any part of the waveform has changed
