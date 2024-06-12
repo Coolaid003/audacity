@@ -15,6 +15,7 @@
 #include <memory>
 #include <vector>
 
+//! All methods will be called only on the main thread
 class AUDIO_IO_API AudioIOListener /* not final */ {
 public:
    AudioIOListener() {}
@@ -30,9 +31,9 @@ public:
    // Commit the addition of temporary recording tracks into the project
    virtual void OnCommitRecording() = 0;
 
-   // During recording, the threshold for sound activation has been crossed
-   // in either direction
-   virtual void OnSoundActivationThreshold() = 0;
+   //! During recording, the threshold for sound activation has been crossed
+   //! in one or the other direction
+   virtual void OnSoundActivationThreshold(bool upward) = 0;
 
 };
 

@@ -12,14 +12,14 @@ set( SOURCES
    AudioIO.h
    AudioIOExt.cpp
    AudioIOExt.h
-   AudioIOListener.cpp
-   AudioIOListener.h
    PlaybackSchedule.cpp
    PlaybackSchedule.h
    ProjectAudioIO.cpp
    ProjectAudioIO.h
    RingBuffer.cpp
    RingBuffer.h
+   TimeQueue.cpp
+   TimeQueue.h
 )
 set( LIBRARIES
    lib-mixer-interface

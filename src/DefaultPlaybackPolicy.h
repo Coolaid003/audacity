@@ -11,6 +11,7 @@
 #define __AUDACITY_DEFAULT_PLAYBACK_POLICY__
 
 #include "PlaybackSchedule.h"
+#include "SharedObjectMessageBuffer.h"
 
 //! The PlaybackPolicy used by Audacity for most playback.
 /*! It subscribes to messages from ViewInfo and PlayRegion for loop bounds
@@ -22,62 +23,74 @@ class DefaultPlaybackPolicy final
    , public NonInterferingBase
 {
 public:
+   // The main thread writes changes in response to user events, and
+   // the audio thread later reads, and changes the playback.
+   struct SlotData : PlaybackMessage {
+      SlotData() = default;
+      SlotData(double playSpeed, double t0, double t1, bool loopEnabled)
+         : mPlaySpeed{ playSpeed }, mT0{ t0 }, mT1{ t1 }
+         , mLoopEnabled{ loopEnabled }
+      {}
+
+      double mPlaySpeed{};
+      double mT0{};
+      double mT1{};
+      bool mLoopEnabled{};
+   };
+
    DefaultPlaybackPolicy( AudacityProject &project,
       double trackEndTime, double loopEndTime, std::optional<double> pStartTime,
       bool loopEnabled, bool variableSpeed);
    ~DefaultPlaybackPolicy() override;
 
-   void Initialize( PlaybackSchedule &schedule, double rate ) override;
+   std::unique_ptr<PlaybackState> CreateState() const override;
 
-   Mixer::WarpOptions MixerWarpOptions(PlaybackSchedule &schedule) override;
+   void Initialize(const PlaybackSchedule &schedule,
+      PlaybackState &state, double rate) override;
 
-   BufferTimes SuggestedBufferTimes(PlaybackSchedule &schedule) override;
+   Mixer::WarpOptions
+   MixerWarpOptions(const PlaybackSchedule &schedule) override;
 
-   bool Done( PlaybackSchedule &schedule, unsigned long ) override;
+   BufferTimes
+   SuggestedBufferTimes(const PlaybackSchedule &schedule) override;
 
-   double OffsetSequenceTime(PlaybackSchedule& schedule, double offset) override;
+   double OffsetSequenceTime(const PlaybackSchedule& schedule,
+      PlaybackState &state, double offset) override;
 
-   PlaybackSlice GetPlaybackSlice(
-      PlaybackSchedule &schedule, size_t available ) override;
+   PlaybackSlice GetPlaybackSlice(const PlaybackSchedule &schedule,
+      PlaybackState &state, size_t available) const override;
 
-   std::pair<double, double>
-      AdvancedTrackTime( PlaybackSchedule &schedule,
-         double trackTime, size_t nSamples ) override;
+   double
+      AdvancedTrackTime(const PlaybackSchedule &schedule, PlaybackState &state,
+         double trackTime, size_t nSamples) const override;
 
-   bool RepositionPlayback(
-      PlaybackSchedule &schedule, const Mixers &playbackMixers,
-      size_t frames, size_t available ) override;
+   std::shared_ptr<PlaybackMessage>
+      PollUser(const PlaybackSchedule &schedule) const override;
+
+   bool RepositionPlayback(const PlaybackSchedule &schedule,
+      PlaybackState &state, const PlaybackMessage &message,
+      Mixer *pMixer, size_t available)
+   const override;
 
    bool Looping( const PlaybackSchedule & ) const override;
 
 private:
-   bool RevertToOldDefault( const PlaybackSchedule &schedule ) const;
    void WriteMessage();
    double GetPlaySpeed();
 
    AudacityProject &mProject;
 
-   // The main thread writes changes in response to user events, and
-   // the audio thread later reads, and changes the playback.
-   struct SlotData {
-      double mPlaySpeed;
-      double mT0;
-      double mT1;
-      bool mLoopEnabled;
-   };
-   MessageBuffer<SlotData> mMessageChannel;
+   SharedObjectMessageBuffer<SlotData> mMessageChannel;
 
    Observer::Subscription mRegionSubscription,
       mSpeedSubscription;
 
-   double mLastPlaySpeed{ 1.0 };
    const double mTrackEndTime;
-   double mLoopEndTime;
+   double mInitLoopEndTime{};
    std::optional<double> mpStartTime;
-   size_t mRemaining{ 0 };
    bool mProgress{ true };
-   bool mLoopEnabled{ true };
    bool mVariableSpeed{ false };
+   const bool mInitLoopEnabled;
 };
 
 #endif

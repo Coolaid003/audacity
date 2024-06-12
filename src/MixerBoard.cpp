@@ -670,8 +670,10 @@ void MixerTrackCluster::UpdateMeter(const double t0, const double t1)
       else if (meterFloatsArray[index] > 1.0)
          meterFloatsArray[index] = 1.0;
 
-   if (mMeter)
-      mMeter->UpdateDisplay(2, nFrames, meterFloatsArray.get());
+   if (mMeter) {
+      Meter *pMeter = mMeter;
+      pMeter->Update(2, nFrames, meterFloatsArray.get(), true);
+   }
 }
 
 // private
@@ -1386,10 +1388,10 @@ void MixerBoard::OnTrackSetChanged()
    Refresh();
 }
 
-void MixerBoard::OnStartStop(AudioIOEvent evt)
+void MixerBoard::OnStartStop(const AudioIOEvent &evt)
 {
-   if (evt.type == AudioIOEvent::PLAYBACK)
-      ResetMeters( evt.on );
+   if (evt.Playing())
+      ResetMeters(evt.Starting());
 }
 
 // class MixerBoardFrame

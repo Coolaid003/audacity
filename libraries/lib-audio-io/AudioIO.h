@@ -9,7 +9,6 @@
   Use the PortAudio library to play and record sound
 
 **********************************************************************/
-
 #ifndef __AUDACITY_AUDIO_IO__
 #define __AUDACITY_AUDIO_IO__
 
@@ -17,17 +16,19 @@
 #include "AudioIOSequences.h"
 #include "PlaybackSchedule.h" // member variable
 
+#include <array>
 #include <functional>
 #include <memory>
 #include <mutex>
 #include <thread>
 #include <utility>
 #include <wx/atomic.h> // member variable
+#include <wx/timer.h>
 
 #include "PluginProvider.h" // for PluginID
 #include "Observer.h"
-#include "SampleCount.h"
 #include "SampleFormat.h"
+#include "TimeQueue.h" // member variable
 
 class wxArrayString;
 class AudioIOBase;
@@ -53,21 +54,101 @@ bool ValidateDeviceNames();
 enum class Acknowledge { eNone = 0, eStart, eStop };
 
 /*!
- Emitted by the global AudioIO object when play, recording, or monitoring
- starts or stops
+ Emitted by the global AudioIO object
 */
 struct AudioIOEvent {
-   AudacityProject *pProject;
+   //! Types of events, including state transitions.
    enum Type {
-      PLAYBACK,
-      CAPTURE,
-      MONITOR,
+      StartPlayback,
+      StopPlayback,
+      StartCapture,
+      StopCapture,
+      StartMonitoring,
+      StopMonitoring,
+      RateChange,
+      NewBlocks,
+      CommitRecording,
+      SoundActivationThresholdCrossedUp,
+      SoundActivationThresholdCrossedDown,
    } type;
-   bool on;
+
+   std::weak_ptr<AudacityProject> wProject{};
+
+   //! Meaningful only for type RateChange; 0 when stopping
+   const int rate{ 0 };
+
+   //! A convenience
+   bool Starting() const {
+      switch (type) {
+      case StartPlayback:
+      case StartCapture:
+      case StartMonitoring:
+         return true;
+      default:
+         return false;
+      }
+   }
+
+   //! A convenience
+   bool Stopping() const {
+      switch (type) {
+      case StopPlayback:
+      case StopCapture:
+      case StopMonitoring:
+         return true;
+      default:
+         return false;
+      }
+   }
+
+   //! A convenience.  This state is not mutually exclusive with Recording or
+   //! Monitoring
+   bool Playing() const {
+      switch (type) {
+         case StartPlayback:
+         case StopPlayback:
+         return true;
+      default:
+         return false;
+      }
+   }
+
+   //! A convenience.  This state is mutually exclusive with Monitoring
+   bool Capturing() const {
+      switch (type) {
+         case StartCapture:
+         case StopCapture:
+         return true;
+      default:
+         return false;
+      }
+   }
+
+   //! A convenience.  This state is mutually exclusive with Capturing
+   bool Monitoring() const {
+      switch (type) {
+         case StartMonitoring:
+         case StopMonitoring:
+         return true;
+      default:
+         return false;
+      }
+   }
+
+   //! A convenience
+   bool StateChange() const {
+      return Starting() || Stopping();
+   }
 };
 
+using MeterablePlaybackSequence = std::pair<
+   std::shared_ptr<const PlayableSequence>,
+   MeterPtrs
+>;
+using MeterablePlaybackSequences = std::vector<MeterablePlaybackSequence>;
+
 struct AUDIO_IO_API TransportSequences final {
-   ConstPlayableSequences playbackSequences;
+   MeterablePlaybackSequences playbackSequences;
    RecordableSequences captureSequences;
    std::vector<std::shared_ptr<const OtherPlayableSequence>>
       otherPlayableSequences;
@@ -121,6 +202,11 @@ public:
       const PaStreamCallbackTimeInfo *timeInfo,
       const PaStreamCallbackFlags statusFlags, void *userData);
 
+   double GetRate() const { return mRate; }
+
+   /** \brief Pause and un-pause playback and recording */
+   void SetPaused(bool state);
+
    //! @name iteration over extensions, supporting range-for syntax
    //! @{
    class AUDIO_IO_API AudioIOExtIterator {
@@ -166,22 +252,14 @@ public:
    }
    //! @}
 
-   std::shared_ptr< AudioIOListener > GetListener() const
-      { return mListener.lock(); }
-   void SetListener( const std::shared_ptr< AudioIOListener > &listener);
-   
    // Part of the callback
    int CallbackDoSeek();
 
-   // Part of the callback
-   void CallbackCheckCompletion(
-      int &callbackReturn, unsigned long len);
-
    int mbHasSoloSequences;
-   int mCallbackReturn;
    // Helpers to determine if sequences have already been faded out.
    unsigned  CountSoloingSequences();
 
+   using OldChannelGains = std::array<float, 2>;
    bool SequenceShouldBeSilent(const PlayableSequence &ps);
 
    void CheckSoundActivatedRecordingLevel(
@@ -189,20 +267,27 @@ public:
       unsigned long framesPerBuffer
    );
 
-   bool FillOutputBuffers(
-      float *outputFloats,
-      unsigned long framesPerBuffer,
-      float *outputMeterFloats
-   );
-   void DrainInputBuffers(
+   //! Mix and copy to PortAudio's output buffer
+   //! from our intermediate playback buffers
+   /*!
+    @pre 'GetNumPlaybackChannels() > 0'
+    */
+   void FillOutputBuffers(
+      float *outputBuffer, size_t framesPerBuffer, size_t toGet);
+   void ApplyMasterGain(bool paused, float *outputFloats, size_t len);
+   //! @return whether recording is finished
+   bool DrainInputBuffers(
       constSamplePtr inputBuffer, 
       unsigned long framesPerBuffer,
       const PaStreamCallbackFlags statusFlags,
       float * tempFloats
    );
-   void UpdateTimePosition(
-      unsigned long framesPerBuffer
-   );
+   //! Update (in realtime thread) the cursor position seen by drawing code
+   //! (later in the main thread)
+   /*!
+    @return false when a stall in the time queue is detected
+    */
+   bool UpdateTimePosition(size_t frames);
    void DoPlaythrough(
       constSamplePtr inputBuffer, 
       float *outputBuffer,
@@ -218,34 +303,8 @@ public:
       unsigned long framesPerBuffer
    );
 
-   /** \brief Get the number of audio samples ready in all of the playback
-   * buffers.
-   *
-   * Returns the smallest of the buffer ready space values in the event that
-   * they are different. */
-   size_t GetCommonlyReadyPlayback();
-
-   size_t GetCommonlyWrittenForPlayback();
-
    /// How many frames of zeros were output due to pauses?
    long    mNumPauseFrames;
-
-#ifdef EXPERIMENTAL_AUTOMATED_INPUT_LEVEL_ADJUSTMENT
-   bool           mAILAActive;
-   bool           mAILAClipped;
-   int            mAILATotalAnalysis;
-   int            mAILAAnalysisCounter;
-   double         mAILAMax;
-   double         mAILAGoalPoint;
-   double         mAILAGoalDelta;
-   double         mAILAAnalysisTime;
-   double         mAILALastStartTime;
-   double         mAILAChangeFactor;
-   double         mAILATopLevel;
-   double         mAILAAnalysisEndTime;
-   double         mAILAAbsolutStartTime;
-   unsigned short mAILALastChangeType;  //0 - no change, 1 - increase change, 2 - decrease change
-#endif
 
    std::thread mAudioThread;
    std::atomic<bool> mFinishAudioThread{ false };
@@ -255,29 +314,35 @@ public:
    using RingBuffers = std::vector<std::unique_ptr<RingBuffer>>;
    RingBuffers mCaptureBuffers;
    RecordableSequences mCaptureSequences;
-   //!Buffers that hold outcome of transformations applied to each individual sample source.
-   //!Number of buffers equals to the sum of number all source channels.
-   std::vector<std::vector<float>> mProcessingBuffers;
-   //!These buffers are used to mix and process the result of processed source channels.
-   //!Number of buffers equals to number of output channels.
-   std::vector<std::vector<float>> mMasterBuffers;
-   /*! Read by worker threads but unchanging during playback */
-   RingBuffers mPlaybackBuffers;
-   ConstPlayableSequences      mPlaybackSequences;
-   // Old gain is used in playback in linearly interpolating
-   // the gain.
-   float mOldPlaybackGain;
+   // TODO more-than-two-channels
+   static constexpr size_t MaxPlaybackChannels = 2;
+   std::array<std::unique_ptr<RingBuffer>, MaxPlaybackChannels> mMasterBuffers;
+   //! @invariant `mpSequence && mpSequence->FindChannelGroup()`
+   struct AUDIO_IO_API Track {
+      const std::shared_ptr<const PlayableSequence> mpSequence;
+      const MeterPtrs mMeters;
+
+      std::unique_ptr<Mixer> mpMixer{};
+      std::unique_ptr<PlaybackState> mpState;
+      /*! Read by worker threads but unchanging during playback */
+      std::array<std::unique_ptr<RingBuffer>, MaxPlaybackChannels> mBuffers;
+      std::array<float, MaxPlaybackChannels> mOldChannelGains{};
+      bool mHasLatency{ false };
+
+      //! @pre `seq && seq->FindChannelGroup()`
+      Track(const MeterablePlaybackSequence &seq);
+      ~Track();
+      void ResetData();
+   };
+   std::vector<Track> mPlaybackTracks;
+   float mOldMasterGain{};
    // Temporary buffers, each as large as the playback buffers
    std::vector<SampleBuffer> mScratchBuffers;
    std::vector<float *> mScratchPointers; //!< pointing into mScratchBuffers
 
-   std::vector<std::unique_ptr<Mixer>> mPlaybackMixers;
-
    std::atomic<float>  mMixerOutputVol{ 1.0 };
    static int          mNextStreamToken;
    double              mFactor;
-   unsigned long       mMaxFramesOutput; // The actual number of frames output.
-   /*! Read by a worker thread but unchanging during playback */
    bool                mbMicroFades;
 
    double              mSeek;
@@ -332,6 +397,9 @@ public:
    PaError             mLastPaError;
 
 protected:
+   void OtherSynchronization(bool paused,
+      size_t framesPerBuffer, const PaStreamCallbackTimeInfo *timeInfo);
+
    static size_t MinValue(
       const RingBuffers &buffers, size_t (RingBuffer::*pmf)() const);
 
@@ -339,11 +407,6 @@ protected:
       return mMixerOutputVol.load(std::memory_order_relaxed); }
    void SetMixerOutputVol(float value) {
       mMixerOutputVol.store(value, std::memory_order_relaxed); }
-
-   /*! Pointer is read by a worker thread but unchanging during playback.
-    (Whether its overriding methods are race-free is not for AudioIO to ensure.)
-    */
-   std::weak_ptr< AudioIOListener > mListener;
 
    bool mUsingAlsa { false };
    bool mUsingJack { false };
@@ -389,9 +452,14 @@ public:
    // detect more dropouts
    std::atomic<bool> mDetectUpstreamDropouts{ true };
 
+   size_t GetNumPlaybackChannels() const {
+      return std::min(mNumPlaybackChannels, MaxPlaybackChannels);
+   }
 protected:
    RecordingSchedule mRecordingSchedule{};
    PlaybackSchedule mPlaybackSchedule;
+   TimeQueue mTimeQueue;
+   std::unique_ptr<PlaybackState> mpState;
 
    struct TransportState;
    //! Holds some state for duration of playback or recording
@@ -404,6 +472,18 @@ private:
     pointers to the subtype AudioIOExt
     */
    using AudioIOBase::mAudioIOExt;
+
+protected:
+   /// Audio playback rate in samples per second
+   /*! Read by worker threads but unchanging during playback */
+   double mRate{ 44100.0 };
+
+   // Stored by the low-latency thread, loaded by the main
+   std::atomic<unsigned> mNewBlocksCount{ 0 };
+   //! Whether the last visit of the callback found volume below the sound
+   //! activation threshold
+   // Stored by the low-latency thread, loaded by the main
+   std::atomic<bool> mLastBelow{ false };
 };
 
 struct PaStreamInfo;
@@ -411,6 +491,7 @@ struct PaStreamInfo;
 class AUDIO_IO_API AudioIO final
    : public AudioIoCallback
    , public Observer::Publisher<AudioIOEvent>
+   , private wxTimer
 {
 
    AudioIO();
@@ -492,8 +573,11 @@ public:
    std::shared_ptr<AudacityProject> GetOwningProject() const
    { return mOwningProject.lock(); }
 
-   /** \brief Pause and un-pause playback and recording */
-   void SetPaused(bool state);
+   struct MixerSettings {
+      int inputSource;
+      float inputVolume;
+      float playbackVolume;
+   };
 
    /* Mixer services are always available.  If no stream is running, these
     * methods use whatever device is specified by the preferences.  If a
@@ -501,10 +585,8 @@ public:
     * with that stream.  If no mixer is available, output is emulated and
     * input is stuck at 1.0f (a gain is applied to output samples).
     */
-   void SetMixer(int inputSource, float inputVolume,
-                 float playbackVolume);
-   void GetMixer(int *inputSource, float *inputVolume,
-                 float *playbackVolume);
+   void SetMixer(MixerSettings settings);
+   MixerSettings GetMixer();
    /** @brief Find out if the input hardware level control is available
     *
     * Checks the mInputMixerWorks variable, which is set up in
@@ -520,7 +602,6 @@ public:
    wxArrayString GetInputSourceNames();
 
    sampleFormat GetCaptureFormat() { return mCaptureFormat; }
-   size_t GetNumPlaybackChannels() const { return mNumPlaybackChannels; }
    size_t GetNumCaptureChannels() const { return mNumCaptureChannels; }
 
    // Meaning really capturing, not just pre-rolling
@@ -531,17 +612,8 @@ public:
     */
    static bool ValidateDeviceNames(const wxString &play, const wxString &rec);
 
-   /** \brief Function to automatically set an acceptable volume
-    *
-    */
-   #ifdef EXPERIMENTAL_AUTOMATED_INPUT_LEVEL_ADJUSTMENT
-      void AILAInitialize();
-      void AILADisable();
-      bool AILAIsActive();
-      void AILAProcess(double maxPeak);
-      void AILASetStartTime();
-      double AILAGetLastDecisionTime();
-   #endif
+   //! Return clock time according to PortAudio
+   double GetClockTime() const;
 
    bool IsAvailable(AudacityProject &project) const;
 
@@ -575,12 +647,11 @@ public:
    void DelayActions(bool recording);
 
 private:
-
    bool DelayingActions() const;
 
-   /** \brief Set the current VU meters - this should be done once after
+   /** \brief Set the current master VU meters - this should be done once after
     * each call to StartStream currently */
-   void SetMeters();
+   void ResetMasterMeters(bool resetClipping);
 
    /** \brief Opens the portaudio stream(s) used to do playback or recording
     * (or both) through.
@@ -608,20 +679,32 @@ private:
 
    //! First part of SequenceBufferExchange
    void FillPlayBuffers();
-
-   bool ProcessPlaybackSlices(
+   void PollUser(PlaybackState &state, size_t newFrames);
+   void ProcessPlaybackSlices(
+      std::optional<RealtimeEffects::ProcessingScope> &pScope, size_t demand);
+   //! @return how many samples were discarded for master stack's latency
+   size_t ProcessPlaybackSlicesPass(bool paused,
+      std::optional<RealtimeEffects::ProcessingScope> &pScope, size_t demand,
+      size_t preprocessed);
+   bool ConsumeFromMixers(bool paused, size_t demand, size_t preprocessed,
       std::optional<RealtimeEffects::ProcessingScope> &pScope,
-      size_t available);
+      std::optional<double> &debugPrevTime,
+      std::optional<double> &debugNextTime);
+   void ConsumeFromMixer(size_t frames, size_t toProduce,
+      Mixer &mixer, size_t nChannels,
+      std::unique_ptr<RingBuffer> playbackBuffers[]);
+   void TransformPlayBuffers(
+      std::optional<RealtimeEffects::ProcessingScope> &scope);
+   //! @return how many samples were discarded for latency
+   size_t ApplyEffectStack(
+      std::optional<RealtimeEffects::ProcessingScope> &scope,
+      const ChannelGroup *pGroup,
+      std::unique_ptr<RingBuffer> playbackBuffers[], size_t preprocessed);
+   void ApplyChannelGains();
+   void MixChannels(size_t demand);
 
    //! Second part of SequenceBufferExchange
    void DrainRecordBuffers();
-
-   /** \brief Get the number of audio samples free in all of the playback
-   * buffers.
-   *
-   * Returns the smallest of the buffer free space values in the event that
-   * they are different. */
-   size_t GetCommonlyFreePlayback();
 
    /** \brief Get the number of audio samples ready in all of the recording
     * buffers.
@@ -630,6 +713,8 @@ private:
     * the recording buffers (i.e. the number of samples that can be read from
     * all record buffers without underflow). */
    size_t GetCommonlyAvailCapture();
+
+   void EmitEvent(AudioIOEvent::Type type, int rate = 0);
 
    /** \brief Allocate RingBuffer structures, and others, needed for playback
      * and recording.
@@ -646,10 +731,20 @@ private:
      * If bOnlyBuffers is specified, it only cleans up the buffers. */
    void StartStreamCleanup(bool bOnlyBuffers = false);
 
+   //! dispatch timer events on the main thread
+   void Notify() override;
+
+   void ResetTrackMeters();
+
    std::mutex mPostRecordingActionMutex;
    PostRecordingAction mPostRecordingAction;
 
    bool mDelayingActions{ false };
+
+   // Used only by the main thread
+   unsigned mLastNewBlocksCount{ 0 };
+   // Used only by the main thread
+   bool mMainThreadLastBelow{ false };
 };
 
 AUDIO_IO_API extern BoolSetting SoundActivatedRecord;

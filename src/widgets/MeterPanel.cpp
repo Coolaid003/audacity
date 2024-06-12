@@ -26,16 +26,6 @@
 \class MeterBar
 \brief A struct used by MeterPanel to hold the position of one bar.
 
-*//****************************************************************//**
-
-\class MeterUpdateMsg
-\brief Message used to update the MeterPanel
-
-*//****************************************************************//**
-
-\class MeterUpdateQueue
-\brief Queue of MeterUpdateMsg used to feed the MeterPanel.
-
 *//******************************************************************/
 
 #include "MeterPanel.h"
@@ -53,10 +43,9 @@
 #include <wx/radiobut.h>
 #include <wx/tooltip.h>
 
-#include <math.h>
-
-#include "AudioIO.h"
 #include "AColor.h"
+#include "AILA.h"
+#include "AudioIO.h"
 #include "../widgets/BasicMenu.h"
 #include "ImageManipulation.h"
 #include "Decibels.h"
@@ -154,35 +143,6 @@ public:
 static const long MIN_REFRESH_RATE = 1;
 static const long MAX_REFRESH_RATE = 100;
 
-/* Updates to the meter are passed across via meter updates, each contained in
- * a MeterUpdateMsg object */
-wxString MeterUpdateMsg::toString()
-{
-wxString output;  // somewhere to build up a string in
-output = wxString::Format(wxT("Meter update msg: %i channels, %i samples\n"), \
-      kMaxMeterBars, numFrames);
-for (int i = 0; i<kMaxMeterBars; i++)
-   {  // for each channel of the meters
-   output += wxString::Format(wxT("%f peak, %f rms "), peak[i], rms[i]);
-   if (clipping[i])
-      output += wxString::Format(wxT("clipped "));
-   else
-      output += wxString::Format(wxT("no clip "));
-   output += wxString::Format(wxT("%i head, %i tail\n"), headPeakCount[i], tailPeakCount[i]);
-   }
-return output;
-}
-
-wxString MeterUpdateMsg::toStringIfClipped()
-{
-   for (int i = 0; i<kMaxMeterBars; i++)
-   {
-      if (clipping[i] || (headPeakCount[i] > 0) || (tailPeakCount[i] > 0))
-         return toString();
-   }
-   return wxT("");
-}
-
 //
 // MeterPanel class
 //
@@ -231,31 +191,22 @@ MeterPanel::MeterPanel(AudacityProject *project,
              bool isInput,
              const wxPoint& pos /*= wxDefaultPosition*/,
              const wxSize& size /*= wxDefaultSize*/,
-             Style style /*= HorizontalStereo*/,
-             float fDecayRate /*= 60.0f*/)
+             Style style /*= HorizontalStereo*/)
 : MeterPanelBase(parent, id, pos, size, wxTAB_TRAVERSAL | wxNO_BORDER | wxWANTS_CHARS),
    mProject(project),
-   mQueue{ 1024 },
    mWidth(size.x),
    mHeight(size.y),
    mIsInput(isInput),
    mDesiredStyle(style),
    mGradient(true),
-   mDB(true),
-   mDBRange(DecibelScaleCutoff.Read()),
-   mDecay(true),
-   mDecayRate(fDecayRate),
    mClip(true),
-   mNumPeakSamplesToClip(3),
-   mPeakHoldDuration(3),
-   mT(0),
    mRate(0),
    mMonitoring(false),
    mActive(false),
-   mNumBars(0),
    mLayoutValid(false),
    mBitmap{},
    mRuler{ LinearUpdater::Instance(), LinearDBFormat::Instance() }
+, PeakAndRmsMeter{ DecibelScaleCutoff.Read() }
 {
    // i18n-hint: Noun (the meter is used for playback or record level monitoring)
    SetName( XO("Meter") );
@@ -332,11 +283,8 @@ MeterPanel::MeterPanel(AudacityProject *project,
    // balistics are right for 44KHz and a bit more frisky than they should be
    // for higher sample rates.
    Reset(44100.0, true);
-}
-
-void MeterPanel::Clear()
-{
-   mQueue.Clear();
+   
+   MeterPanelBase::Init(this);
 }
 
 void MeterPanel::UpdatePrefs()
@@ -410,22 +358,15 @@ void MeterPanel::UpdateSelectedPrefs(int id)
 void MeterPanel::UpdateSliderControl()
 {
 #if USE_PORTMIXER
-   float inputVolume;
-   float playbackVolume;
-   int inputSource;
-
    // Show or hide the input slider based on whether it works
    auto gAudioIO = AudioIO::Get();
    if (mIsInput && mSlider)
       mSlider->SetEnabled(mEnabled && gAudioIO->InputMixerWorks());
-
-   gAudioIO->GetMixer(&inputSource, &inputVolume, &playbackVolume);
-
+   const auto [inputSource, inputVolume, playbackVolume] =
+      gAudioIO->GetMixer();
    const auto volume = mIsInput ? inputVolume : playbackVolume;
-
    if (mSlider && (mSlider->Get() != volume))
       mSlider->Set(volume);
-
 #endif // USE_PORTMIXER
 }
 
@@ -606,7 +547,7 @@ void MeterPanel::OnPaint(wxPaintEvent & WXUNUSED(event))
    // Go draw the meter bars, Left & Right channels using current levels
    for (unsigned int i = 0; i < mNumBars; i++)
    {
-      DrawMeterBar(destDC, &mBar[i]);
+      DrawMeterBar(destDC, mBar[i], mStats[i]);
    }
 
    destDC.SetTextForeground( clrText );
@@ -760,23 +701,16 @@ void MeterPanel::SetStyle(Style newStyle)
 void MeterPanel::SetMixer(wxCommandEvent & WXUNUSED(event))
 {
 #if USE_PORTMIXER
-   if (mSlider)
-   {
-      float inputVolume;
-      float outputVolume;
-      int inputSource;
-
+   if (mSlider) {
       Refresh();
-
       auto gAudioIO = AudioIO::Get();
-      gAudioIO->GetMixer(&inputSource, &inputVolume, &outputVolume);
-
+      auto settings = gAudioIO->GetMixer();
+      auto &[inputSource, inputVolume, outputVolume] = settings;
       if (mIsInput)
          inputVolume = mSlider->Get();
       else
          outputVolume = mSlider->Get();
-
-      gAudioIO->SetMixer(inputSource, inputVolume, outputVolume);
+      gAudioIO->SetMixer(settings);
 
 #if wxUSE_ACCESSIBILITY
       GetAccessible()->NotifyEvent( wxACC_EVENT_OBJECT_VALUECHANGE,
@@ -828,99 +762,20 @@ void MeterPanel::Decrease(float steps)
 
 void MeterPanel::Reset(double sampleRate, bool resetClipping)
 {
-   mT = 0;
    mRate = sampleRate;
-   for (int j = 0; j < kMaxMeterBars; j++)
-   {
-      ResetBar(&mBar[j], resetClipping);
-   }
 
    // wxTimers seem to be a little unreliable - sometimes they stop for
    // no good reason, so this "primes" it every now and then...
    mTimer.Stop();
 
    // While it's stopped, empty the queue
-   mQueue.Clear();
+   PeakAndRmsMeter::Reset(sampleRate, resetClipping);
 
    mLayoutValid = false;
 
    mTimer.Start(1000 / mMeterRefreshRate);
 
    Refresh(false);
-}
-
-static float floatMax(float a, float b)
-{
-   return a>b? a: b;
-}
-
-/* Unused as yet.
-static int intmin(int a, int b)
-{
-   return a<b? a: b;
-}
-*/
-
-static int intmax(int a, int b)
-{
-   return a>b? a: b;
-}
-
-static float ClipZeroToOne(float z)
-{
-   if (z > 1.0)
-      return 1.0;
-   else if (z < 0.0)
-      return 0.0;
-   else
-      return z;
-}
-
-static float ToDB(float v, float range)
-{
-   double db;
-   if (v > 0)
-      db = LINEAR_TO_DB(fabs(v));
-   else
-      db = -999;
-   return ClipZeroToOne((db + range) / range);
-}
-
-void MeterPanel::UpdateDisplay(
-   unsigned numChannels, int numFrames, const float *sampleData)
-{
-   auto sptr = sampleData;
-   auto num = std::min(numChannels, mNumBars);
-   MeterUpdateMsg msg;
-
-   memset(&msg, 0, sizeof(msg));
-   msg.numFrames = numFrames;
-
-   for(int i=0; i<numFrames; i++) {
-      for(unsigned int j=0; j<num; j++) {
-         msg.peak[j] = floatMax(msg.peak[j], fabs(sptr[j]));
-         msg.rms[j] += sptr[j]*sptr[j];
-
-         // In addition to looking for mNumPeakSamplesToClip peaked
-         // samples in a row, also send the number of peaked samples
-         // at the head and tail, in case there's a run of peaked samples
-         // that crosses block boundaries
-         if (fabs(sptr[j])>=MAX_AUDIO) {
-            if (msg.headPeakCount[j]==i)
-               msg.headPeakCount[j]++;
-            msg.tailPeakCount[j]++;
-            if (msg.tailPeakCount[j] > mNumPeakSamplesToClip)
-               msg.clipping[j] = true;
-         }
-         else
-            msg.tailPeakCount[j] = 0;
-      }
-      sptr += numChannels;
-   }
-   for(unsigned int j=0; j<mNumBars; j++)
-      msg.rms[j] = sqrt(msg.rms[j]/numFrames);
-
-   mQueue.Put(msg);
 }
 
 // Vaughan, 2010-11-29: This not currently used. See comments in MixerTrackCluster::UpdateMeter().
@@ -968,99 +823,40 @@ void MeterPanel::UpdateDisplay(
 //   mQueue.Put(msg);
 //}
 
-void MeterPanel::OnMeterUpdate(wxTimerEvent & WXUNUSED(event))
+void MeterPanel::Receive(
+   [[maybe_unused]] double time,
+   [[maybe_unused]] const MeterUpdateMsg &msg)
 {
-   MeterUpdateMsg msg;
-   int numChanges = 0;
+   ++mNumChanges;
 #ifdef EXPERIMENTAL_AUTOMATED_INPUT_LEVEL_ADJUSTMENT
-   double maxPeak = 0.0;
-   bool discarded = false;
-#endif
-
-   // We shouldn't receive any events if the meter is disabled, but clear it to be safe
-   if (mMeterDisabled) {
-      mQueue.Clear();
-      return;
-   }
-
-
-   // There may have been several update messages since the last
-   // time we got to this function.  Catch up to real-time by
-   // popping them off until there are none left.  It is necessary
-   // to process all of them, otherwise we won't handle peaks and
-   // peak-hold bars correctly.
-   while(mQueue.Get(msg)) {
-      numChanges++;
-      double deltaT = msg.numFrames / mRate;
-
-      mT += deltaT;
-      for(unsigned int j=0; j<mNumBars; j++) {
-         mBar[j].isclipping = false;
-
-         //
-         if (mDB) {
-            msg.peak[j] = ToDB(msg.peak[j], mDBRange);
-            msg.rms[j] = ToDB(msg.rms[j], mDBRange);
-         }
-
-         if (mDecay) {
-            if (mDB) {
-               float decayAmount = mDecayRate * deltaT / mDBRange;
-               mBar[j].peak = floatMax(msg.peak[j],
-                                       mBar[j].peak - decayAmount);
-            }
-            else {
-               double decayAmount = mDecayRate * deltaT;
-               double decayFactor = DB_TO_LINEAR(-decayAmount);
-               mBar[j].peak = floatMax(msg.peak[j],
-                                       mBar[j].peak * decayFactor);
-            }
-         }
-         else
-            mBar[j].peak = msg.peak[j];
-
-         // This smooths out the RMS signal
-         float smooth = pow(0.9, (double)msg.numFrames/1024.0);
-         mBar[j].rms = mBar[j].rms * smooth + msg.rms[j] * (1.0 - smooth);
-
-         if (mT - mBar[j].peakHoldTime > mPeakHoldDuration ||
-             mBar[j].peak > mBar[j].peakHold) {
-            mBar[j].peakHold = mBar[j].peak;
-            mBar[j].peakHoldTime = mT;
-         }
-
-         if (mBar[j].peak > mBar[j].peakPeakHold )
-            mBar[j].peakPeakHold = mBar[j].peak;
-
-         if (msg.clipping[j] ||
-             mBar[j].tailPeakCount+msg.headPeakCount[j] >=
-             mNumPeakSamplesToClip){
-            mBar[j].clipping = true;
-            mBar[j].isclipping = true;
-         }
-
-         mBar[j].tailPeakCount = msg.tailPeakCount[j];
-#ifdef EXPERIMENTAL_AUTOMATED_INPUT_LEVEL_ADJUSTMENT
-         if (mT > gAudioIO->AILAGetLastDecisionTime()) {
-            discarded = false;
-            maxPeak = msg.peak[j] > maxPeak ? msg.peak[j] : maxPeak;
-            wxPrintf("%f@%f ", msg.peak[j], mT);
-         }
-         else {
-            discarded = true;
-            wxPrintf("%f@%f discarded\n", msg.peak[j], mT);
-         }
-#endif
+   for (size_t j = 0; j < mNumBars; ++j) {
+      if (time > AILA::Get().GetLastDecisionTime()) {
+         mDiscarded = false;
+         mMaxPeak = std::max<double>(msg.peak[j], mMaxPeak);
+         wxPrintf("%f@%f ", msg.peak[j], time);
       }
-   } // while
+      else {
+         mDiscarded = true;
+         wxPrintf("%f@%f discarded\n", msg.peak[j], time);
+      }
+   }
+#endif
+}
 
-   if (numChanges > 0) {
-      #ifdef EXPERIMENTAL_AUTOMATED_INPUT_LEVEL_ADJUSTMENT
-         if (gAudioIO->AILAIsActive() && mIsInput && !discarded) {
-            gAudioIO->AILAProcess(maxPeak);
-            putchar('\n');
-         }
-      #endif
+void MeterPanel::OnMeterUpdate(wxTimerEvent &)
+{
+   mMaxPeak = 0.0;
+   mNumChanges = 0;
+   mDiscarded = false;
+
+   Poll();
+   if (mNumChanges > 0) {
+#ifdef EXPERIMENTAL_AUTOMATED_INPUT_LEVEL_ADJUSTMENT
+      if (AILA::Get().IsActive() && mIsInput && !mDiscarded) {
+         AILA::Get().Process(mProject, IsClipping(), GetDBRange(), mMaxPeak);
+         putchar('\n');
+      }
+#endif
       RepaintBarsNow();
    }
 }
@@ -1071,22 +867,11 @@ void MeterPanel::OnTipTimeout(wxTimerEvent& evt)
       mSlider->ShowTip(true);
 }
 
-
-float MeterPanel::GetMaxPeak() const
-{
-   float maxPeak = 0.;
-
-   for(unsigned int j=0; j<mNumBars; j++)
-      maxPeak = mBar[j].peak > maxPeak ? mBar[j].peak : maxPeak;
-
-   return(maxPeak);
-}
-
 float MeterPanel::GetPeakHold() const
 {
    auto peakHold = .0f;
    for (unsigned int i = 0; i < mNumBars; i++)
-      peakHold = std::max(peakHold, mBar[i].peakPeakHold);
+      peakHold = std::max(peakHold, mStats[i].peakPeakHold);
    return peakHold;
 }
 
@@ -1100,21 +885,6 @@ wxFont MeterPanel::GetFont() const
    return wxFont(fontSize, wxFONTFAMILY_SWISS, wxFONTSTYLE_NORMAL, wxFONTWEIGHT_NORMAL);
 }
 
-void MeterPanel::ResetBar(MeterBar *b, bool resetClipping)
-{
-   b->peak = 0.0;
-   b->rms = 0.0;
-   b->peakHold = 0.0;
-   b->peakHoldTime = 0.0;
-   if (resetClipping)
-   {
-      b->clipping = false;
-      b->peakPeakHold = 0.0;
-   }
-   b->isclipping = false;
-   b->tailPeakCount = 0;
-}
-
 bool MeterPanel::IsActive() const
 {
    return mActive;
@@ -1123,14 +893,6 @@ bool MeterPanel::IsActive() const
 bool MeterPanel::IsMonitoring() const
 {
    return mMonitoring;
-}
-
-bool MeterPanel::IsClipping() const
-{
-   for (int c = 0; c < mNumBars; c++)
-      if (mBar[c].clipping)
-         return true;
-   return false;
 }
 
 void MeterPanel::SetActiveStyle(Style newStyle)
@@ -1305,7 +1067,7 @@ void MeterPanel::HandleLayout(wxDC &dc)
    case VerticalStereo:
       // Determine required width of each side;
       lside = ltxtWidth + gap;
-      rside = intmax(mRulerWidth, rtxtWidth);
+      rside = std::max(mRulerWidth, rtxtWidth);
 
       // left is now the right edge of the icon or L label
       left = lside;
@@ -1412,7 +1174,7 @@ void MeterPanel::HandleLayout(wxDC &dc)
       mRightTextPos = wxPoint(left, (height * 3 / 4) - rtxtHeight / 2);
 
       // Add width of widest of the L/R characters
-      left += intmax(ltxtWidth, rtxtWidth); //, iconWidth);
+      left += std::max(ltxtWidth, rtxtWidth); //, iconWidth);
 
       mSliderPos = wxPoint{ left - gap, 0 };
 
@@ -1457,7 +1219,7 @@ void MeterPanel::HandleLayout(wxDC &dc)
       mRightTextPos = wxPoint(left, (height * 3 / 4) - (ltxtHeight / 2));
 
       // Add width of widest of the L/R characters
-      left += intmax(ltxtWidth, rtxtWidth);
+      left += std::max(ltxtWidth, rtxtWidth);
 
       mSliderPos = wxPoint{ left - gap, 0 };
 
@@ -1515,25 +1277,25 @@ void MeterPanel::RepaintBarsNow()
       }
 
       // Immediate redraw (using wxPaintDC)
-      Update();
+      wxPanelWrapper::Update();
 
       return;
    }
 }
 
-void MeterPanel::DrawMeterBar(wxDC &dc, MeterBar *bar)
+void MeterPanel::DrawMeterBar(wxDC &dc, MeterBar &bar, Stats &stats)
 {
    // Cache some metrics
-   wxCoord x = bar->r.GetLeft();
-   wxCoord y = bar->r.GetTop();
-   wxCoord w = bar->r.GetWidth();
-   wxCoord h = bar->r.GetHeight();
+   wxCoord x = bar.r.GetLeft();
+   wxCoord y = bar.r.GetTop();
+   wxCoord w = bar.r.GetWidth();
+   wxCoord h = bar.r.GetHeight();
    wxCoord ht;
    wxCoord wd;
 
    // Setup for erasing the background
    dc.SetPen(*wxTRANSPARENT_PEN);
-   dc.SetBrush(mMeterDisabled ? mDisabledBkgndBrush : mBkgndBrush);
+   dc.SetBrush(mBkgndBrush);
 
    if (mGradient)
    {
@@ -1541,12 +1303,12 @@ void MeterPanel::DrawMeterBar(wxDC &dc, MeterBar *bar)
       wxMemoryDC srcDC;
       srcDC.SelectObject(*mBitmap);
 
-      if (bar->vert)
+      if (bar.vert)
       {
          // Copy as much of the predrawn meter bar as is required for the
          // current peak.
          // (h - 1) corresponds to the mRuler.SetBounds() in HandleLayout()
-         ht = (int)(bar->peak * (h - 1) + 0.5);
+         ht = (int)(stats.peak * (h - 1) + 0.5);
 
          // Blank out the rest
          if (h - ht)
@@ -1566,7 +1328,7 @@ void MeterPanel::DrawMeterBar(wxDC &dc, MeterBar *bar)
          // Draw the "recent" peak hold line using the predrawn meter bar so that
          // it will be the same color as the original level.
          // (h - 1) corresponds to the mRuler.SetBounds() in HandleLayout()
-         ht = (int)(bar->peakHold * (h - 1) + 0.5);
+         ht = (int)(stats.peakHold * (h - 1) + 0.5);
          if (ht > 1)
          {
             dc.Blit(x, y + h - ht - 1, w, 2, &srcDC, x, y + h - ht - 1);
@@ -1575,7 +1337,7 @@ void MeterPanel::DrawMeterBar(wxDC &dc, MeterBar *bar)
          // Draw the "maximum" peak hold line
          // (h - 1) corresponds to the mRuler.SetBounds() in HandleLayout()
          dc.SetPen(mPeakPeakPen);
-         ht = (int)(bar->peakPeakHold * (h - 1) + 0.5);
+         ht = (int)(stats.peakPeakHold * (h - 1) + 0.5);
          if (ht > 0)
          {
             AColor::Line(dc, x, y + h - ht - 1, x + w - 1, y + h - ht - 1);
@@ -1589,7 +1351,7 @@ void MeterPanel::DrawMeterBar(wxDC &dc, MeterBar *bar)
       {
          // Calculate the peak position
          // (w - 1) corresponds to the mRuler.SetBounds() in HandleLayout()
-         wd = (int)(bar->peak * (w - 1) + 0.5);
+         wd = (int)(stats.peak * (w - 1) + 0.5);
 
          // Blank out the rest
          if (w - wd)
@@ -1610,7 +1372,7 @@ void MeterPanel::DrawMeterBar(wxDC &dc, MeterBar *bar)
          // Draw the "recent" peak hold line using the predrawn meter bar so that
          // it will be the same color as the original level.
          // -1 to give a 2 pixel width
-         wd = (int)(bar->peakHold * (w - 1) + 0.5);
+         wd = (int)(stats.peakHold * (w - 1) + 0.5);
          if (wd > 1)
          {
             dc.Blit(x + wd - 1, y, 2, h, &srcDC, x + wd, y);
@@ -1619,7 +1381,7 @@ void MeterPanel::DrawMeterBar(wxDC &dc, MeterBar *bar)
          // Draw the "maximum" peak hold line using a themed color
          // (w - 1) corresponds to the mRuler.SetBounds() in HandleLayout()
          dc.SetPen(mPeakPeakPen);
-         wd = (int)(bar->peakPeakHold * (w - 1) + 0.5);
+         wd = (int)(stats.peakPeakHold * (w - 1) + 0.5);
          if (wd > 0)
          {
             AColor::Line(dc, x + wd, y, x + wd, y + h - 1);
@@ -1635,11 +1397,11 @@ void MeterPanel::DrawMeterBar(wxDC &dc, MeterBar *bar)
    }
    else
    {
-      if (bar->vert)
+      if (bar.vert)
       {
          // Calculate the peak position
          // (h - 1) corresponds to the mRuler.SetBounds() in HandleLayout()
-         ht = (int)(bar->peak * (h - 1) + 0.5);
+         ht = (int)(stats.peak * (h - 1) + 0.5);
 
          // Blank out the rest
          if (h - ht)
@@ -1660,7 +1422,7 @@ void MeterPanel::DrawMeterBar(wxDC &dc, MeterBar *bar)
          // Draw the "recent" peak hold line
          // (h - 1) corresponds to the mRuler.SetBounds() in HandleLayout()
          dc.SetPen(mPen);
-         ht = (int)(bar->peakHold * (h - 1) + 0.5);
+         ht = (int)(stats.peakHold * (h - 1) + 0.5);
          if (ht > 0)
          {
             AColor::Line(dc, x, y + h - ht - 1, x + w - 1, y + h - ht - 1);
@@ -1673,7 +1435,7 @@ void MeterPanel::DrawMeterBar(wxDC &dc, MeterBar *bar)
          // Calculate the rms position
          // (h - 1) corresponds to the mRuler.SetBounds() in HandleLayout()
          // +1 to include the rms position
-         ht = (int)(bar->rms * (h - 1) + 0.5);
+         ht = (int)(stats.rms * (h - 1) + 0.5);
 
          // Draw the RMS level
          dc.SetPen(*wxTRANSPARENT_PEN);
@@ -1686,7 +1448,7 @@ void MeterPanel::DrawMeterBar(wxDC &dc, MeterBar *bar)
          // Draw the "maximum" peak hold line
          // (h - 1) corresponds to the mRuler.SetBounds() in HandleLayout()
          dc.SetPen(mPeakPeakPen);
-         ht = (int)(bar->peakPeakHold * (h - 1) + 0.5);
+         ht = (int)(stats.peakPeakHold * (h - 1) + 0.5);
          if (ht > 0)
          {
             AColor::Line(dc, x, y + h - ht - 1, x + w - 1, y + h - ht - 1);
@@ -1700,7 +1462,7 @@ void MeterPanel::DrawMeterBar(wxDC &dc, MeterBar *bar)
       {
          // Calculate the peak position
          // (w - 1) corresponds to the mRuler.SetBounds() in HandleLayout()
-         wd = (int)(bar->peak * (w - 1) + 0.5);
+         wd = (int)(stats.peak * (w - 1) + 0.5);
 
          // Blank out the rest
          if (w - wd)
@@ -1721,7 +1483,7 @@ void MeterPanel::DrawMeterBar(wxDC &dc, MeterBar *bar)
          // Draw the "recent" peak hold line
          // (w - 1) corresponds to the mRuler.SetBounds() in HandleLayout()
          dc.SetPen(mPen);
-         wd = (int)(bar->peakHold * (w - 1) + 0.5);
+         wd = (int)(stats.peakHold * (w - 1) + 0.5);
          if (wd > 0)
          {
             AColor::Line(dc, x + wd, y, x + wd, y + h - 1);
@@ -1733,7 +1495,7 @@ void MeterPanel::DrawMeterBar(wxDC &dc, MeterBar *bar)
 
          // Calculate the rms position
          // (w - 1) corresponds to the mRuler.SetBounds() in HandleLayout()
-         wd = (int)(bar->rms * (w - 1) + 0.5);
+         wd = (int)(stats.rms * (w - 1) + 0.5);
 
          // Draw the rms level
          // +1 to include the rms position
@@ -1747,7 +1509,7 @@ void MeterPanel::DrawMeterBar(wxDC &dc, MeterBar *bar)
          // Draw the "maximum" peak hold line using a themed color
          // (w - 1) corresponds to the mRuler.SetBounds() in HandleLayout()
          dc.SetPen(mPeakPeakPen);
-         wd = (int)(bar->peakPeakHold * (w - 1) + 0.5);
+         wd = (int)(stats.peakPeakHold * (w - 1) + 0.5);
          if (wd > 0)
          {
             AColor::Line(dc, x + wd, y, x + wd, y + h - 1);
@@ -1764,8 +1526,8 @@ void MeterPanel::DrawMeterBar(wxDC &dc, MeterBar *bar)
    //       it is always "true".
    if (mClip)
    {
-      if (bar->clipping)
-      {
+      if (stats.clipping)
+       {
          dc.SetBrush(mClipBrush);
       }
       else
@@ -1773,17 +1535,12 @@ void MeterPanel::DrawMeterBar(wxDC &dc, MeterBar *bar)
          dc.SetBrush(mBkgndBrush);
       }
       dc.SetPen(*wxTRANSPARENT_PEN);
-      wxRect r(bar->rClip.GetX() + 1,
-               bar->rClip.GetY() + 1,
-               bar->rClip.GetWidth() - 1,
-               bar->rClip.GetHeight() - 1);
+      wxRect r(bar.rClip.GetX() + 1,
+               bar.rClip.GetY() + 1,
+               bar.rClip.GetWidth() - 1,
+               bar.rClip.GetHeight() - 1);
       dc.DrawRectangle(r);
    }
-}
-
-bool MeterPanel::IsMeterDisabled() const
-{
-   return mMeterDisabled != 0;
 }
 
 void MeterPanel::StartMonitoring()
@@ -1814,16 +1571,18 @@ void MeterPanel::StopMonitoring(){
    }
 }
 
-void MeterPanel::OnAudioIOStatus(AudioIOEvent evt)
+void MeterPanel::OnAudioIOStatus(const AudioIOEvent &evt)
 {
-   if (!mIsInput != (evt.type == AudioIOEvent::PLAYBACK))
+   const auto interested =
+      mIsInput ? (evt.Capturing() || evt.Monitoring()) : evt.Playing();
+   if (!interested)
       return;
 
-   AudacityProject *p = evt.pProject;
-   mActive = evt.on && (p == mProject);
-   if( mActive ){
+   const auto p = evt.wProject.lock().get();
+   mActive = evt.Starting() && (p == mProject);
+   if (mActive) {
       mTimer.Start(1000 / mMeterRefreshRate);
-      if (evt.type == AudioIOEvent::MONITOR)
+      if (evt.Monitoring())
          mMonitoring = mActive;
    } else {
       mTimer.Stop();
@@ -1835,14 +1594,11 @@ void MeterPanel::OnAudioIOStatus(AudioIOEvent evt)
       Refresh(false);
 }
 
-void MeterPanel::OnAudioCapture(AudioIOEvent event)
+void MeterPanel::OnAudioCapture(const AudioIOEvent &evt)
 {
-   if (
-      event.type == AudioIOEvent::CAPTURE &&
-      (event.pProject != mProject || !event.on))
+   if (evt.Capturing() && evt.wProject.lock().get() != mProject)
    {
-      mEnabled = !event.on;
-
+      mEnabled = evt.Stopping();
       if (mSlider)
          mSlider->SetEnabled(mEnabled);
    }
