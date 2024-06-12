@@ -59,6 +59,8 @@ set( USE_VST ${${_OPT}use_vst} CACHE INTERNAL "" )
 #
 set( SOURCES
    PRIVATE
+      AILA.cpp
+      AILA.h
       ActiveProject.cpp
       ActiveProject.h
       AboutDialog.cpp
@@ -146,6 +148,8 @@ set( SOURCES
       MovableControl.cpp
       MovableControl.h
       NoteTrackEditing.cpp
+      PeakAndRmsMeter.cpp
+      PeakAndRmsMeter.h
       PitchName.cpp
       PitchName.h
       PluginDataModel.cpp
@@ -783,6 +787,8 @@ set( SOURCES
       tracks/playabletrack/wavetrack/ui/WaveTrackControls.cpp
       tracks/playabletrack/wavetrack/ui/WaveTrackControls.h
       tracks/playabletrack/wavetrack/ui/WaveTrackMenuItems.cpp
+      tracks/playabletrack/wavetrack/ui/WaveTrackMeter.cpp
+      tracks/playabletrack/wavetrack/ui/WaveTrackMeter.h
       tracks/playabletrack/wavetrack/ui/WaveTrackShifter.cpp
       tracks/playabletrack/wavetrack/ui/WaveTrackSliderHandles.cpp
       tracks/playabletrack/wavetrack/ui/WaveTrackSliderHandles.h
@@ -893,6 +899,8 @@ set( SOURCES
       widgets/LinearUpdater.h
       widgets/LogarithmicUpdater.cpp
       widgets/LogarithmicUpdater.h
+      widgets/MeterPainter.cpp
+      widgets/MeterPainter.h
       widgets/MeterPanel.cpp
       widgets/MeterPanel.h
       widgets/MeterPanelBase.cpp

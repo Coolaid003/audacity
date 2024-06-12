@@ -7,7 +7,6 @@
  Paul Licameli split from AudioIOBase.cpp
  
  **********************************************************************/
-
 #include "PlaybackSchedule.h"
 
 #include "AudioIOBase.h"
@@ -18,22 +17,67 @@
 
 #include <cmath>
 
-PlaybackPolicy::~PlaybackPolicy() = default;
+PlaybackState::~PlaybackState() = default;
 
-void PlaybackPolicy::Initialize( PlaybackSchedule &, double rate )
+double PlaybackState::RealDurationElapsed() const
 {
-   mRate = rate;
+   return mWarpedTime;
 }
 
-void PlaybackPolicy::Finalize( PlaybackSchedule & ){}
+double PlaybackState::RealDurationRemaining() const
+{
+   return mWarpedLength - mWarpedTime;
+}
 
-Mixer::WarpOptions PlaybackPolicy::MixerWarpOptions(PlaybackSchedule &schedule)
+void PlaybackState::RealTimeAdvance(double increment)
+{
+   mWarpedTime += increment;
+}
+
+void PlaybackState::RealDurationInit(double duration)
+{
+   mWarpedTime = duration;
+}
+
+void PlaybackState::RealTimeRestart()
+{
+   mWarpedTime = 0;
+}
+
+PlaybackMessage::~PlaybackMessage() = default;
+PlaybackPolicy::~PlaybackPolicy() = default;
+
+void PlaybackState::Assign(const PlaybackState &other)
+{
+   *this = other;
+}
+
+std::unique_ptr<PlaybackState> PlaybackPolicy::CreateState() const
+{
+   return std::make_unique<PlaybackState>();
+}
+
+void PlaybackPolicy::Initialize(const PlaybackSchedule &schedule,
+   PlaybackState &state, double rate)
+{
+   mRate = rate;
+   state.mT0 = schedule.mInitT0;
+   state.mT1 = schedule.mInitT1;
+   state.mWarpedLength = schedule.mInitWarpedLength;
+}
+
+void PlaybackPolicy::Finalize(const PlaybackSchedule &)
+{
+}
+
+Mixer::WarpOptions
+PlaybackPolicy::MixerWarpOptions(const PlaybackSchedule &schedule)
 {
    return Mixer::WarpOptions{ schedule.mEnvelope };
 }
 
 PlaybackPolicy::BufferTimes
-PlaybackPolicy::SuggestedBufferTimes(PlaybackSchedule &)
+PlaybackPolicy::SuggestedBufferTimes(const PlaybackSchedule &)
 {
    using namespace std::chrono;
 #if 1
@@ -55,43 +99,33 @@ we can afford even smaller times.
 #endif
 }
 
-bool PlaybackPolicy::AllowSeek(PlaybackSchedule &)
+bool PlaybackPolicy::AllowSeek(const PlaybackSchedule &)
 {
    return true;
 }
 
-bool PlaybackPolicy::Done( PlaybackSchedule &schedule,
-   unsigned long outputFrames)
-{
-   // Called from portAudio thread, use GetSequenceTime()
-   auto diff = schedule.GetSequenceTime() - schedule.mT1;
-   if (schedule.ReversedTime())
-      diff *= -1;
-   return sampleCount(floor(diff * mRate + 0.5)) >= 0 &&
-      // Require also that output frames are all consumed from ring buffer
-      outputFrames == 0;
-}
-
 double PlaybackPolicy::OffsetSequenceTime(
-   PlaybackSchedule &schedule, double offset )
+   const PlaybackSchedule &schedule, PlaybackState &state, double offset)
 {
    auto time = schedule.GetSequenceTime() + offset;
-   time = std::clamp(time, schedule.mT0, schedule.mT1);
-   schedule.RealTimeInit( time );
+   const auto t0 = state.mT0;
+   time = std::clamp(time, t0, state.mT1);
+   state.RealDurationInit(schedule.RealDurationSigned(t0, time));
    return time;
 }
 
-std::chrono::milliseconds PlaybackPolicy::SleepInterval(PlaybackSchedule &)
+std::chrono::milliseconds
+PlaybackPolicy::SleepInterval(const PlaybackSchedule &)
 {
    using namespace std::chrono;
    return 10ms;
 }
 
-PlaybackSlice
-PlaybackPolicy::GetPlaybackSlice(PlaybackSchedule &schedule, size_t available)
+PlaybackSlice PlaybackPolicy::GetPlaybackSlice(const PlaybackSchedule &,
+   PlaybackState &state, size_t available) const
 {
    // How many samples to produce for each channel.
-   const auto realTimeRemaining = schedule.RealTimeRemaining();
+   const auto realTimeRemaining = state.RealDurationRemaining();
    auto frames = available;
    auto toProduce = frames;
    double deltat = frames / mRate;
@@ -105,20 +139,20 @@ PlaybackPolicy::GetPlaybackSlice(PlaybackSchedule &schedule, size_t available)
       auto realTime = realTimeRemaining + extra;
       frames = realTime * mRate + 0.5;
       toProduce = realTimeRemaining * mRate + 0.5;
-      schedule.RealTimeAdvance( realTime );
+      state.RealTimeAdvance(realTime);
    }
    else
-      schedule.RealTimeAdvance( deltat );
+      state.RealTimeAdvance(deltat);
 
    return { available, frames, toProduce };
 }
 
-std::pair<double, double>
-PlaybackPolicy::AdvancedTrackTime( PlaybackSchedule &schedule,
-   double trackTime, size_t nSamples )
+double PlaybackPolicy::AdvancedTrackTime(const PlaybackSchedule &schedule,
+   PlaybackState &state, double trackTime, size_t nSamples) const
 {
    auto realDuration = nSamples / mRate;
-   if (schedule.ReversedTime())
+   const bool reversed = state.ReversedTime();
+   if (reversed)
       realDuration *= -1.0;
 
    if (schedule.mEnvelope)
@@ -126,15 +160,25 @@ PlaybackPolicy::AdvancedTrackTime( PlaybackSchedule &schedule,
          schedule.SolveWarpedLength(trackTime, realDuration);
    else
       trackTime += realDuration;
-   
-   if ( trackTime >= schedule.mT1 )
-      return { schedule.mT1, std::numeric_limits<double>::infinity() };
+
+   const auto halfSample = 0.5 / mRate;
+   if (reversed
+       ? trackTime - halfSample <= state.mT1
+       : trackTime + halfSample >= state.mT1)
+      return std::numeric_limits<double>::infinity();
    else
-      return { trackTime, trackTime };
+      return trackTime;
+}
+
+auto PlaybackPolicy::PollUser(const PlaybackSchedule &) const
+   -> std::shared_ptr<PlaybackMessage>
+{
+   return nullptr;
 }
 
 bool PlaybackPolicy::RepositionPlayback(
-   PlaybackSchedule &, const Mixers &, size_t, size_t)
+   const PlaybackSchedule &, PlaybackState &, const PlaybackMessage &,
+   Mixer *, size_t) const
 {
    return true;
 }
@@ -165,7 +209,7 @@ const PlaybackPolicy &PlaybackSchedule::GetPolicy() const
    return const_cast<PlaybackSchedule&>(*this).GetPolicy();
 }
 
-void PlaybackSchedule::Init(
+std::unique_ptr<PlaybackState> PlaybackSchedule::Init(
    const double t0, const double t1,
    const AudioIOStartStreamOptions &options,
    const RecordingSchedule *pRecordingSchedule )
@@ -182,26 +226,26 @@ void PlaybackSchedule::Init(
    else
       mEnvelope = options.envelope;
 
-   mT0      = t0;
+   mInitT0 = t0;
    if (pRecordingSchedule)
-      mT0 -= pRecordingSchedule->mPreRoll;
+      mInitT0 -= pRecordingSchedule->mPreRoll;
 
-   mT1      = t1;
+   mInitT1 = t1;
    if (pRecordingSchedule)
       // adjust mT1 so that we don't give paComplete too soon to fill up the
       // desired length of recording
-      mT1 -= pRecordingSchedule->mLatencyCorrection;
+      mInitT1 -= pRecordingSchedule->mLatencyCorrection;
 
    // Main thread's initialization of mTime
-   SetSequenceTime( mT0 );
+   SetSequenceTime(mInitT0);
 
    if (options.policyFactory)
       mpPlaybackPolicy = options.policyFactory(options);
 
-   mWarpedTime = 0.0;
-   mWarpedLength = RealDuration(mT1);
+   mInitWarpedLength = RealDuration(mInitT0, mInitT1);
 
    mPolicyValid.store(true, std::memory_order_release);
+   return GetPolicy().CreateState();
 }
 
 double PlaybackSchedule::ComputeWarpedLength(double t0, double t1) const
@@ -220,34 +264,16 @@ double PlaybackSchedule::SolveWarpedLength(double t0, double length) const
       return t0 + length;
 }
 
-double PlaybackSchedule::RealDuration(double trackTime1) const
+double PlaybackSchedule::RealDuration(double trackTime0, double trackTime1)
+const
 {
-   return fabs(RealDurationSigned(trackTime1));
+   return fabs(RealDurationSigned(trackTime0, trackTime1));
 }
 
-double PlaybackSchedule::RealDurationSigned(double trackTime1) const
+double PlaybackSchedule::RealDurationSigned(
+   double trackTime0, double trackTime1) const
 {
-   return ComputeWarpedLength(mT0, trackTime1);
-}
-
-double PlaybackSchedule::RealTimeRemaining() const
-{
-   return mWarpedLength - mWarpedTime;
-}
-
-void PlaybackSchedule::RealTimeAdvance( double increment )
-{
-   mWarpedTime += increment;
-}
-
-void PlaybackSchedule::RealTimeInit( double trackTime )
-{
-   mWarpedTime = RealDurationSigned( trackTime );
-}
-
-void PlaybackSchedule::RealTimeRestart()
-{
-   mWarpedTime = 0;
+   return ComputeWarpedLength(trackTime0, trackTime1);
 }
 
 double RecordingSchedule::ToConsume() const
@@ -265,112 +291,3 @@ double RecordingSchedule::ToDiscard() const
    return std::max(0.0, -( mPosition + TotalCorrection() ) );
 }
 
-void PlaybackSchedule::TimeQueue::Clear()
-{
-   mData = Records{};
-   mHead = {};
-   mTail = {};
-}
-
-void PlaybackSchedule::TimeQueue::Resize(size_t size)
-{
-   mData.resize(size);
-}
-
-void PlaybackSchedule::TimeQueue::Producer(
-   PlaybackSchedule &schedule, PlaybackSlice slice )
-{
-   auto &policy = schedule.GetPolicy();
-
-   if ( mData.empty() )
-      // Recording only.  Don't fill the queue.
-      return;
-
-   // Don't check available space:  assume it is enough because of coordination
-   // with RingBuffer.
-   auto index = mTail.mIndex;
-   auto time = mLastTime;
-   auto remainder = mTail.mRemainder;
-   auto space = TimeQueueGrainSize - remainder;
-   const auto size = mData.size();
-
-   // Produce advancing times
-   auto frames = slice.toProduce;
-   while ( frames >= space ) {
-      auto times = policy.AdvancedTrackTime( schedule, time, space );
-      time = times.second;
-      if (!std::isfinite(time))
-         time = times.first;
-      index = (index + 1) % size;
-      mData[ index ].timeValue = time;
-      frames -= space;
-      remainder = 0;
-      space = TimeQueueGrainSize;
-   }
-   // Last odd lot
-   if ( frames > 0 ) {
-      auto times = policy.AdvancedTrackTime( schedule, time, frames );
-      time = times.second;
-      if (!std::isfinite(time))
-         time = times.first;
-      remainder += frames;
-      space -= frames;
-   }
-
-   // Produce constant times if there is also some silence in the slice
-   frames = slice.frames - slice.toProduce;
-   while ( frames > 0 && frames >= space ) {
-      index = (index + 1) % size;
-      mData[ index ].timeValue = time;
-      frames -= space;
-      remainder = 0;
-      space = TimeQueueGrainSize;
-   }
-
-   mLastTime = time;
-   mTail.mRemainder = remainder + frames;
-   mTail.mIndex = index;
-}
-
-double PlaybackSchedule::TimeQueue::GetLastTime() const
-{
-   return mLastTime;
-}
-
-void PlaybackSchedule::TimeQueue::SetLastTime(double time)
-{
-   mLastTime = time;
-}
-
-double PlaybackSchedule::TimeQueue::Consumer( size_t nSamples, double rate )
-{
-   if ( mData.empty() ) {
-      // Recording only.  No scrub or playback time warp.  Don't use the queue.
-      return ( mLastTime += nSamples / rate );
-   }
-
-   // Don't check available space:  assume it is enough because of coordination
-   // with RingBuffer.
-   auto remainder = mHead.mRemainder;
-   auto space = TimeQueueGrainSize - remainder;
-   const auto size = mData.size();
-   if ( nSamples >= space ) {
-      remainder = 0,
-      mHead.mIndex = (mHead.mIndex + 1) % size,
-      nSamples -= space;
-      if ( nSamples >= TimeQueueGrainSize )
-         mHead.mIndex =
-            (mHead.mIndex + ( nSamples / TimeQueueGrainSize ) ) % size,
-         nSamples %= TimeQueueGrainSize;
-   }
-   mHead.mRemainder = remainder + nSamples;
-   return mData[ mHead.mIndex ].timeValue;
-}
-
-void PlaybackSchedule::TimeQueue::Prime(double time)
-{
-   mHead = mTail = {};
-   mLastTime = time;
-   if ( !mData.empty() )
-      mData[0].timeValue = time;
-}

@@ -50,41 +50,38 @@ public:
    explicit ScrubbingPlaybackPolicy(const ScrubbingOptions &);
    ~ScrubbingPlaybackPolicy() override;
 
-   void Initialize( PlaybackSchedule &schedule, double rate ) override;
-   void Finalize( PlaybackSchedule &schedule ) override;
+   std::unique_ptr<PlaybackState> CreateState() const override;
 
-   Mixer::WarpOptions MixerWarpOptions(PlaybackSchedule &schedule) override;
+   void Initialize(const PlaybackSchedule &schedule,
+      PlaybackState &state, double rate) override;
+   void Finalize(const PlaybackSchedule &schedule) override;
 
-   BufferTimes SuggestedBufferTimes(PlaybackSchedule &schedule) override;
+   Mixer::WarpOptions
+   MixerWarpOptions(const PlaybackSchedule &schedule) override;
 
-   bool AllowSeek( PlaybackSchedule & ) override;
+   BufferTimes SuggestedBufferTimes(const PlaybackSchedule &schedule) override;
+
+   bool AllowSeek(const PlaybackSchedule &) override;
 
    std::chrono::milliseconds
-      SleepInterval( PlaybackSchedule & ) override;
+      SleepInterval(const PlaybackSchedule &) override;
 
-   bool Done( PlaybackSchedule &schedule, unsigned long ) override;
+   PlaybackSlice GetPlaybackSlice(const PlaybackSchedule &schedule,
+      PlaybackState &state, size_t available) const override;
 
-   PlaybackSlice GetPlaybackSlice(
-      PlaybackSchedule &schedule, size_t available) override;
+   double
+      AdvancedTrackTime(const PlaybackSchedule &schedule, PlaybackState &state,
+         double trackTime, size_t nSamples) const override;
 
-   std::pair<double, double>
-      AdvancedTrackTime( PlaybackSchedule &schedule,
-         double trackTime, size_t nSamples ) override;
+   std::shared_ptr<PlaybackMessage>
+      PollUser(const PlaybackSchedule &schedule) const override;
 
-   bool RepositionPlayback(
-      PlaybackSchedule &schedule, const Mixers &playbackMixers,
-      size_t frames,
-      size_t available
-   ) override;
+   bool RepositionPlayback(const PlaybackSchedule &schedule,
+      PlaybackState &state, const PlaybackMessage &message,
+      Mixer *pMixer, size_t available)
+   const override;
 
 private:
-   sampleCount mScrubDuration{ 0 }, mStartSample{ 0 }, mEndSample{ 0 };
-   double mOldEndTime{ 0 }, mNewStartTime{ 0 };
-   double mScrubSpeed{ 0 };
-   bool mSilentScrub{ false };
-   bool mReplenish{ false };
-   size_t mUntilDiscontinuity{ 0 };
-
    const ScrubbingOptions mOptions;
 };
 

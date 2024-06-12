@@ -79,7 +79,6 @@ size_t RingBuffer::WrittenForGet() const
 size_t RingBuffer::Put(constSamplePtr buffer, sampleFormat format,
                     size_t samplesToCopy, size_t padding)
 {
-   mLastPadding = padding;
    auto start = mStart.load( std::memory_order_acquire );
    auto end = mWritten;
    const auto free = Free( start, end );
@@ -155,9 +154,6 @@ size_t RingBuffer::Unput(size_t size)
    // Move mWritten backwards by result
    mWritten = (mWritten + (mBufferSize - result)) % mBufferSize;
 
-   // Adjust mLastPadding
-   mLastPadding = std::min(mLastPadding, Filled(end, mWritten));
-
    return result;
 }
 
@@ -184,13 +180,17 @@ size_t RingBuffer::Clear(sampleFormat format, size_t samplesToClear)
    return cleared;
 }
 
-std::pair<samplePtr, size_t> RingBuffer::GetUnflushed(unsigned iBlock)
+std::pair<samplePtr, size_t>
+RingBuffer::GetUnflushed(size_t offset, unsigned iBlock)
 {
    // This function is called by the writer
 
    // Find total number of samples unflushed:
    auto end = mEnd.load(std::memory_order_relaxed);
-   const size_t size = Filled(end, mWritten) - mLastPadding;
+   const size_t fullSize = Filled(end, mWritten);
+   offset = std::min(offset, fullSize);
+   const auto size = fullSize - offset;
+   end = (end + offset) % mBufferSize;
 
    // How many in the first part:
    const size_t size0 = std::min(size, mBufferSize - end);
@@ -212,20 +212,17 @@ void RingBuffer::Flush()
    // Atomically update the end pointer with release, so the nonatomic writes
    // just done to the buffer don't get reordered after
    mEnd.store(mWritten, std::memory_order_release);
-   mLastPadding = 0;
 }
 
-//
-// For the reader only:
-// Only reader writes the start, so it can read it again relaxed
-// But it reads the end written by the writer, who also sends sample data
-// with the changes of end; therefore that must be read with acquire order
-// if we do more than merely query the size or throw samples away
-//
-
+/*!
+ For the reader only:
+ Only reader writes the start, so it can read it again relaxed
+ But it reads the end written by the writer, who also sends sample data
+ if we do more than merely query the size or throw samples away
+*/
 size_t RingBuffer::AvailForGet() const
 {
-   auto end = mEnd.load( std::memory_order_relaxed ); // get away with it here
+   auto end = mEnd.load(std::memory_order_acquire);
    auto start = mStart.load( std::memory_order_relaxed );
    return Filled( start, end );
 
@@ -234,7 +231,7 @@ size_t RingBuffer::AvailForGet() const
 }
 
 size_t RingBuffer::Get(samplePtr buffer, sampleFormat format,
-                       size_t samplesToCopy)
+   size_t samplesToCopy, size_t dstStride)
 {
    // Must match the writer's release with acquire for well defined reads of
    // the buffer
@@ -249,9 +246,9 @@ size_t RingBuffer::Get(samplePtr buffer, sampleFormat format,
 
       CopySamples(mBuffer.ptr() + start * SAMPLE_SIZE(mFormat), mFormat,
                   dest, format,
-                  block, DitherType::none);
+                  block, DitherType::none, 1, dstStride);
 
-      dest += block * SAMPLE_SIZE(format);
+      dest += block * SAMPLE_SIZE(format) * dstStride;
       start = (start + block) % mBufferSize;
       samplesToCopy -= block;
       copied += block;
@@ -275,4 +272,12 @@ size_t RingBuffer::Discard(size_t samplesToDiscard)
                 std::memory_order_relaxed);
 
    return samplesToDiscard;
+}
+
+size_t RingBuffer::Excess(const RingBuffer &other) const
+{
+   size_t written = this->mWritten;
+   if (written < other.mWritten)
+      written += mBufferSize;
+   return written - other.mWritten;
 }

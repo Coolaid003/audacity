@@ -7,10 +7,10 @@
  Paul Licameli split from AudioIO.cpp
  
  **********************************************************************/
-
 #include "ScrubState.h"
 #include "AudioIO.h"
 #include "Mix.h"
+#include "SharedObjectMessageBuffer.h"
 
 namespace {
 struct ScrubQueue : NonInterferingBase
@@ -23,14 +23,14 @@ struct ScrubQueue : NonInterferingBase
               double rate,
               const ScrubbingOptions &options)
    {
+      mMessage.Initialize();
       mRate = rate;
       mStartTime = t0;
       const double t1 = options.bySpeed ? options.initSpeed : t0;
       Update( t1, options );
 
-      mStarted = false;
+      mStarted = true;
       mStopped = false;
-      mAccumulatedSeekDuration = 0;
    }
 
    void Update(double end, const ScrubbingOptions &options)
@@ -39,41 +39,66 @@ struct ScrubQueue : NonInterferingBase
       mMessage.Write({ end, options });
    }
 
-   void Get(sampleCount &startSample, sampleCount &endSample,
-         sampleCount inDuration, sampleCount &duration)
+   struct Data;
+   struct Message : PlaybackMessage {
+      Message() = default;
+      Message(double end, ScrubbingOptions options)
+         : end{ end }, options{ options }
+      {}
+      Message(const Message&) = default;
+      double end;
+      ScrubbingOptions options;
+   };
+
+   // Just peek at the inter-thread message
+   std::shared_ptr<Message> Read() const { return mMessage.Read(); }
+
+   // Later transform the message to update state
+   void Get(const Message &message, Data &data, sampleCount inDuration,
+      // out parameters follow
+      sampleCount &startSample, sampleCount &endSample,
+      // When this is -1, scrubbing should stop
+      sampleCount &duration) const
    {
       // Called by the thread that calls AudioIO::SequenceBufferExchange
-      startSample = endSample = duration = -1LL;
-      sampleCount s0Init;
+      // All state is externalized into message and data
 
-      Message message( mMessage.Read() );
-      if ( !mStarted ) {
-         s0Init = llrint( mRate *
-            std::max( message.options.minTime,
-               std::min( message.options.maxTime, mStartTime ) ) );
+      // Default values of out parameters:
+      startSample = endSample = duration = -1LL;
+
+      auto &mData = data;
+      auto &mAccumulatedSeekDuration = data.mAccumulatedSeekDuration;
+      auto &mFirst = data.mFirst;
+
+      sampleCount s0Init{};
+
+      if (mFirst) {
+         s0Init = llrint(mRate * std::clamp(mStartTime,
+            message.options.minTime, message.options.maxTime));
 
          // Make some initial silence. This is not needed in the case of
          // keyboard scrubbing or play-at-speed, because the initial speed
          // is known when this function is called the first time.
-         if ( !(message.options.isKeyboardScrubbing) ) {
+         if (!(message.options.isKeyboardScrubbing)) {
             mData.mS0 = mData.mS1 = s0Init;
             mData.mGoal = -1;
+            // Assign duration, so scrubbing doesn't stop
             mData.mDuration = duration = inDuration;
             mData.mSilence = 0;
          }
       }
 
-      if (mStarted || message.options.isKeyboardScrubbing) {
+      if (!mFirst || message.options.isKeyboardScrubbing) {
          Data newData;
          inDuration += mAccumulatedSeekDuration;
 
-         // If already started, use the previous end as NEW start.
-         const auto s0 = mStarted ? mData.mS1 : s0Init;
-         const sampleCount s1 ( message.options.bySpeed
+         // If already started, use the previous end as new start.
+         const auto s0 = !mFirst ? mData.mS1 : s0Init;
+         const sampleCount s1{ message.options.bySpeed
             ? s0.as_double() +
                lrint(inDuration.as_double() * message.end) // end is a speed
             : lrint(message.end * mRate)            // end is a time
-         );
+         };
          auto success =
             newData.Init(mData, s0, s1, inDuration, message.options, mRate);
          if (success)
@@ -85,25 +110,24 @@ struct ScrubQueue : NonInterferingBase
          mData = newData;
       };
 
-      mStarted = true;
+      mFirst = false;
 
-      Data &entry = mData;
-      if (  mStopped.load( std::memory_order_relaxed ) ) {
+      if (mStopped.load( std::memory_order_relaxed)) {
          // We got the shut-down signal, or we discarded all the work.
          // Output the -1 values.
       }
-      else if (entry.mDuration > 0) {
+      else if (mData.mDuration > 0) {
          // First use of the entry
-         startSample = entry.mS0;
-         endSample = entry.mS1;
-         duration = entry.mDuration;
-         entry.mDuration = 0;
+         startSample = mData.mS0;
+         endSample = mData.mS1;
+         duration = mData.mDuration;
+         mData.mDuration = 0;
       }
-      else if (entry.mSilence > 0) {
+      else if (mData.mSilence > 0) {
          // Second use of the entry
-         startSample = endSample = entry.mS1;
-         duration = entry.mSilence;
-         entry.mSilence = 0;
+         startSample = endSample = mData.mS1;
+         duration = mData.mSilence;
+         mData.mSilence = 0;
       }
    }
 
@@ -113,26 +137,22 @@ struct ScrubQueue : NonInterferingBase
       mStarted = false;
    }
 
+#if 0
    // Should make mS1 atomic?
    double LastTrackTime() const
    {
       // Needed by the main thread sometimes
       return mData.mS1.as_double() / mRate;
    }
+#endif
 
    ~ScrubQueue() {}
 
    bool Started() const { return mStarted; }
 
-private:
    struct Data
    {
       Data()
-         : mS0(0)
-         , mS1(0)
-         , mGoal(0)
-         , mDuration(0)
-         , mSilence(0)
       {}
 
       bool Init(Data &rPrevious, sampleCount s0, sampleCount s1,
@@ -265,29 +285,46 @@ private:
          return true;
       }
 
-      sampleCount mS0;
-      sampleCount mS1;
-      sampleCount mGoal;
-      sampleCount mDuration;
-      sampleCount mSilence;
+      sampleCount mS0{ 0 };
+      sampleCount mS1{ 0 };
+      sampleCount mGoal{ 0 };
+      sampleCount mDuration{ 0 };
+      sampleCount mSilence{ 0 };
+      sampleCount mAccumulatedSeekDuration{ 0 };
+      bool mFirst{ true };
    };
 
+private:
+   // These two are assigned only when initializing a scrub
    double mStartTime{};
+   double mRate{};
+
    bool mStarted{ false };
    std::atomic<bool> mStopped { false };
-   Data mData;
-   double mRate{};
-   struct Message {
-      Message() = default;
-      Message(const Message&) = default;
-      double end;
-      ScrubbingOptions options;
-   };
-   MessageBuffer<Message> mMessage;
-   sampleCount mAccumulatedSeekDuration{};
+
+   SharedObjectMessageBuffer<Message> mMessage;
 };
 
 ScrubQueue ScrubQueue::Instance;
+
+struct SPPState : AssignablePlaybackState<SPPState> {
+   struct Data {
+      sampleCount mScrubDuration{ 0 };
+      sampleCount mStartSample{ 0 };
+      sampleCount mEndSample{ 0 };
+      bool mDiscontinuity{ false };
+      //! When true, playhead position is determined, but scrub pauses there
+      bool mSilentScrub{ false };
+   } mData;
+   struct Times {
+      // Next track time to jump to
+      double mNewStartTime{ 0 };
+      // How many samples to consume before a jump in track time
+      size_t mUntilDiscontinuity{ 0 };
+   } mTimes;
+   double mScrubSpeed{ 0 };
+   ScrubQueue::Data mQueueState;
+};
 }
 
 ScrubbingPlaybackPolicy::ScrubbingPlaybackPolicy(
@@ -297,24 +334,25 @@ ScrubbingPlaybackPolicy::ScrubbingPlaybackPolicy(
 
 ScrubbingPlaybackPolicy::~ScrubbingPlaybackPolicy() = default;
 
-void ScrubbingPlaybackPolicy::Initialize( PlaybackSchedule &schedule,
-   double rate )
+std::unique_ptr<PlaybackState> ScrubbingPlaybackPolicy::CreateState() const
 {
-   PlaybackPolicy::Initialize(schedule, rate);
-   mScrubDuration = mStartSample = mEndSample = 0;
-   mOldEndTime = mNewStartTime = 0;
-   mScrubSpeed = 0;
-   mSilentScrub = mReplenish = false;
-   mUntilDiscontinuity = 0;
-   ScrubQueue::Instance.Init( schedule.mT0, rate, mOptions );
+   return std::make_unique<SPPState>();
 }
 
-void ScrubbingPlaybackPolicy::Finalize(  PlaybackSchedule & )
+void ScrubbingPlaybackPolicy::Initialize(const PlaybackSchedule &schedule,
+   PlaybackState &state, double rate)
+{
+   PlaybackPolicy::Initialize(schedule, state, rate);
+   ScrubQueue::Instance.Init(schedule.mInitT0, rate, mOptions);
+}
+
+void ScrubbingPlaybackPolicy::Finalize(const PlaybackSchedule &)
 {
    ScrubQueue::Instance.Stop();
 }
 
-Mixer::WarpOptions ScrubbingPlaybackPolicy::MixerWarpOptions(PlaybackSchedule &)
+Mixer::WarpOptions
+ScrubbingPlaybackPolicy::MixerWarpOptions(const PlaybackSchedule &)
 {
    return Mixer::WarpOptions{
       ScrubbingOptions::MinAllowedScrubSpeed(),
@@ -322,7 +360,7 @@ Mixer::WarpOptions ScrubbingPlaybackPolicy::MixerWarpOptions(PlaybackSchedule &)
 }
 
 PlaybackPolicy::BufferTimes
-ScrubbingPlaybackPolicy::SuggestedBufferTimes(PlaybackSchedule &)
+ScrubbingPlaybackPolicy::SuggestedBufferTimes(const PlaybackSchedule &)
 {
    using namespace std::chrono;
    return {
@@ -343,87 +381,96 @@ ScrubbingPlaybackPolicy::SuggestedBufferTimes(PlaybackSchedule &)
    };
 }
 
-bool ScrubbingPlaybackPolicy::AllowSeek( PlaybackSchedule & )
+bool ScrubbingPlaybackPolicy::AllowSeek(const PlaybackSchedule &)
 {
    // While scrubbing, ignore seek requests
    return false;
 }
 
-bool ScrubbingPlaybackPolicy::Done(
-   PlaybackSchedule &schedule, unsigned long )
-{
-   return false;
-}
-
 std::chrono::milliseconds
-ScrubbingPlaybackPolicy::SleepInterval( PlaybackSchedule & )
+ScrubbingPlaybackPolicy::SleepInterval(const PlaybackSchedule &)
 {
    return ScrubPollInterval;
 }
 
 PlaybackSlice ScrubbingPlaybackPolicy::GetPlaybackSlice(
-   PlaybackSchedule &, size_t available)
+   const PlaybackSchedule &, PlaybackState &st, size_t available) const
 {
-   if (mReplenish)
-      return { available, 0, 0 };
-
-   auto gAudioIO = AudioIO::Get();
+   auto &state = static_cast<SPPState&>(st);
+   auto &[mScrubDuration, _, __,
+      mDiscontinuity, mSilentScrub
+   ] = state.mData;
+   auto &mUntilDiscontinuity = state.mTimes.mUntilDiscontinuity;
 
    // How many samples to produce for each channel.
-   auto frames = available;
-   auto toProduce = frames;
+   const auto frames = limitSampleBufferSize(available, mScrubDuration);
+   const auto toProduce = (mSilentScrub ? 0 : frames);
 
-   // scrubbing and play-at-speed are not limited by the real time
-   // and length accumulators
-   toProduce =
-      frames = limitSampleBufferSize(frames, mScrubDuration);
-
-   if (mSilentScrub)
-      toProduce = 0;
+   // The first call to this function during a scrub still has zero
+   // for mScrubDuration, until RepositionPlayback is called
+   if (mScrubDuration >= 0 && mDiscontinuity)
+      // This variable affects AdvancedPlaybackTime
+      mUntilDiscontinuity = frames;
 
    mScrubDuration -= frames;
-   wxASSERT(mScrubDuration >= 0);
+   assert(mScrubDuration >= 0);
 
-   mUntilDiscontinuity = 0;
-   if (mScrubDuration <= 0) {
-      mReplenish = true;
-      auto oldEndSample = mEndSample;
-      mOldEndTime = oldEndSample.as_long_long() / mRate;
-      ScrubQueue::Instance.Get(
-         mStartSample, mEndSample, available, mScrubDuration);
-      mNewStartTime = mStartSample.as_long_long() / mRate;
-      if(mScrubDuration >= 0 && oldEndSample != mStartSample)
-         mUntilDiscontinuity = frames;
-   }
-
+   // The lesser of available and frames is the first member of the result
+   // and that is frames
    return { available, frames, toProduce };
 }
 
-std::pair<double, double> ScrubbingPlaybackPolicy::AdvancedTrackTime(
-   PlaybackSchedule &schedule, double trackTime, size_t nSamples )
+// Called one or more times between GetPlaybackSlice and RepositionPlayback,
+// and the total values of nSamples is the toProduce of the slice, which is
+// zero for the first slice (so mUntilDiscontinuity and mNewStartTime do not
+// matter then)
+double ScrubbingPlaybackPolicy::AdvancedTrackTime(
+   const PlaybackSchedule &, PlaybackState &st,
+   double trackTime, size_t nSamples) const
 {
+   auto &state = static_cast<SPPState&>(st);
+   auto &[mNewStartTime, mUntilDiscontinuity] = state.mTimes;
    auto realDuration = nSamples / mRate;
-   auto result = trackTime + realDuration * mScrubSpeed;
+   auto result = trackTime + realDuration * state.mScrubSpeed;
    bool discontinuity = nSamples > 0 &&
       mUntilDiscontinuity > 0 &&
       0 == (mUntilDiscontinuity -= std::min(mUntilDiscontinuity, nSamples));
    if (discontinuity)
-      return { mOldEndTime, mNewStartTime };
+      return mNewStartTime;
    else
-      return { result, result };
+      return result;
+}
+
+std::shared_ptr<PlaybackMessage>
+ScrubbingPlaybackPolicy::PollUser(const PlaybackSchedule &) const
+{
+   // This executes in the SequenceBufferExchange thread
+   return ScrubQueue::Instance.Read();
 }
 
 bool ScrubbingPlaybackPolicy::RepositionPlayback(
-   PlaybackSchedule &schedule, const Mixers &playbackMixers,
-   size_t frames, size_t available)
+   const PlaybackSchedule &schedule, PlaybackState &st,
+   const PlaybackMessage &message,
+   Mixer *pMixer, const size_t available) const
 {
-   auto gAudioIO = AudioIO::Get();
+   auto &state = static_cast<SPPState&>(st);
+   auto &[mScrubDuration, mStartSample, mEndSample,
+      mDiscontinuity, mSilentScrub
+   ] = state.mData;
+   auto &mNewStartTime = state.mTimes.mNewStartTime;
+   auto &mScrubSpeed = state.mScrubSpeed;
 
-   if (available > 0 && mReplenish)
-   {
-      mReplenish = false;
-      if (mScrubDuration < 0)
-      {
+   if (available > 0 && mScrubDuration <= 0) {
+      // Find the scrub duration and scrub slice bounds
+      const auto oldEndSample = mEndSample;
+      ScrubQueue::Instance.Get(
+         static_cast<const ScrubQueue::Message &>(message), state.mQueueState,
+         available,
+         // out parameters, which are -1 when scrubbing should stop
+         mStartSample, mEndSample, mScrubDuration);
+      mNewStartTime = mStartSample.as_long_long() / mRate;
+      mDiscontinuity = (oldEndSample != mStartSample);
+      if (mScrubDuration < 0) {
          // Can't play anything
          // Stop even if we don't fill up available
          mScrubDuration = 0;
@@ -431,8 +478,7 @@ bool ScrubbingPlaybackPolicy::RepositionPlayback(
          // Force stop of filling of buffers
          return true;
       }
-      else
-      {
+      else {
          mSilentScrub = (mEndSample == mStartSample);
          double startTime, endTime;
          startTime = mStartSample.as_double() / mRate;
@@ -441,17 +487,12 @@ bool ScrubbingPlaybackPolicy::RepositionPlayback(
          if (mScrubDuration == 0)
             mScrubSpeed = 0;
          else
-            mScrubSpeed =
-               double(diff) / mScrubDuration.as_double();
-         if (!mSilentScrub)
-         {
-            for (auto &pMixer : playbackMixers) {
-               if (mOptions.isKeyboardScrubbing)
-                  pMixer->SetSpeedForKeyboardScrubbing(mScrubSpeed, startTime);
-               else
-                  pMixer->SetTimesAndSpeed(
-                     startTime, endTime, fabs( mScrubSpeed ));
-            }
+            mScrubSpeed = double(diff) / mScrubDuration.as_double();
+         if (pMixer && !mSilentScrub) {
+            if (mOptions.isKeyboardScrubbing)
+               pMixer->SetSpeedForKeyboardScrubbing(mScrubSpeed, startTime);
+            else
+               pMixer->SetTimesAndSpeed(startTime, endTime, fabs(mScrubSpeed));
          }
       }
    }
@@ -459,6 +500,8 @@ bool ScrubbingPlaybackPolicy::RepositionPlayback(
    return false;
 }
 
+// Called from the thread that produces messages
+// (maybe the main thread, or another dedicated thread)
 void ScrubState::UpdateScrub
    (double endTimeOrSpeed, const ScrubbingOptions &options)
 {
@@ -466,22 +509,25 @@ void ScrubState::UpdateScrub
    queue.Update(endTimeOrSpeed, options);
 }
 
+// Called from the main thread
 void ScrubState::StopScrub()
 {
    auto &queue = ScrubQueue::Instance;
    queue.Stop();
 }
 
-// Only for DRAG_SCRUB
+#if 0
+// Only for DRAG_SCRUB, a disabled experiment
 double ScrubState::GetLastScrubTime()
 {
    auto &queue = ScrubQueue::Instance;
    return queue.LastTrackTime();
 }
+#endif
 
 bool ScrubState::IsScrubbing()
 {
    auto gAudioIO = AudioIOBase::Get();
-   auto &queue = ScrubQueue::Instance;
+   const auto &queue = ScrubQueue::Instance;
    return gAudioIO->IsBusy() && queue.Started();
 }
