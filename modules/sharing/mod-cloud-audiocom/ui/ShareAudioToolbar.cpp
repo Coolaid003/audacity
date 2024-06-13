@@ -20,12 +20,13 @@
 #endif
 
 #include "AColor.h"
-#include "AudioIOBase.h"
 #include "AllThemeResources.h"
+#include "AudioIOBase.h"
+#include "ExportUtils.h"
+#include "PlayableTrack.h"
 #include "Prefs.h"
 #include "ProjectWindow.h"
 #include "Theme.h"
-#include "PlayableTrack.h"
 
 #include "dialogs/ShareAudioDialog.h"
 #include "toolbars/ToolManager.h"
@@ -171,15 +172,14 @@ void ShareAudioToolbar::MakeShareAudioButton()
    mShareAudioButton->SetIcon(theTheme.Image(bmpShareAudio));
    mShareAudioButton->SetForegroundColour(theTheme.Colour(clrTrackPanelText));
 
-   mShareAudioButton->Bind(
-      wxEVT_BUTTON,
-      [this](auto)
-      {
-         audiocom::ShareAudioDialog dlg(mProject, &ProjectWindow::Get(mProject));
-         dlg.ShowModal();
+   mShareAudioButton->Bind(wxEVT_BUTTON, [this](auto) {
+      audiocom::ShareAudioDialog dlg(
+         mProject, AudiocomTrace::ShareAudioButton,
+         &ProjectWindow::Get(mProject));
+      dlg.ShowModal();
 
-         mShareAudioButton->PopUp();
-      });
+      mShareAudioButton->PopUp();
+   });
 }
 
 void ShareAudioToolbar::ArrangeButtons()
