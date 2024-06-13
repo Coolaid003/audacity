@@ -37,8 +37,18 @@ static const wxColor inputColor { 71, 154, 42, 128 };
 static const wxColor outputColor { 103, 124, 228, 128 };
 static const wxColor actualCompressionColor { 255, 255, 255 };
 
-constexpr auto actualCompressionLineWidth =
-   DynamicRangeProcessorPanel::targetCompressionLineWidth + 4;
+bool MayUsePenGradients()
+{
+   // MacOS doesn't cope well with pen gradients. (Freezes in debug and is
+   // transperent in release.)
+   return wxPlatformInfo::Get().GetOperatingSystemId() & wxOS_WINDOWS;
+}
+
+int GetActualCompressionLineWidth()
+{
+   using namespace DynamicRangeProcessorPanel;
+   return targetCompressionLineWidth + (MayUsePenGradients() ? 4 : 2);
+}
 
 float GetDbRange(int height)
 {
@@ -271,18 +281,24 @@ void DrawLegend(size_t height, wxPaintDC& dc, wxGraphicsContext& gc)
       wxPoint2DDouble(actualX + lineWidth, lineY)
    };
 
-   gc.SetPen({ actualCompressionColor, actualCompressionLineWidth });
+   gc.SetPen({ actualCompressionColor, GetActualCompressionLineWidth() });
    gc.DrawLines(2, actualLine.data());
 
-   wxGraphicsPenInfo penInfo;
-   wxGraphicsGradientStops stops { actualCompressionColor,
-                                   actualCompressionColor };
-   stops.Add(attackColor.GetRGB(), 1 / 4.);
-   stops.Add(actualCompressionColor, 2 / 4.);
-   stops.Add(releaseColor.GetRGB(), 3 / 4.);
-   penInfo.LinearGradient(actualX, 0, actualX + lineWidth, 0, stops)
-      .Width(targetCompressionLineWidth);
-   gc.SetPen(gc.CreatePen(penInfo));
+   if (MayUsePenGradients())
+   {
+      wxGraphicsPenInfo penInfo;
+      wxGraphicsGradientStops stops { actualCompressionColor,
+                                      actualCompressionColor };
+      stops.Add(attackColor.GetRGB(), 1 / 4.);
+      stops.Add(actualCompressionColor, 2 / 4.);
+      stops.Add(releaseColor.GetRGB(), 3 / 4.);
+      penInfo.LinearGradient(actualX, 0, actualX + lineWidth, 0, stops)
+         .Width(targetCompressionLineWidth);
+      gc.SetPen(gc.CreatePen(penInfo));
+   }
+   else
+      gc.SetPen(actualCompressionColor);
+
    gc.DrawLines(2, actualLine.data());
    const auto actualText = XO("Actual Compression");
    const auto actualTextX = actualX + lineWidth + legendSpacing;
@@ -447,36 +463,38 @@ void DynamicRangeProcessorHistoryPanel::OnPaint(wxPaintEvent& evt)
          const auto actualGc = MakeGraphicsContext(dc);
 
          actualGc->SetPen(
-            wxPen { actualCompressionColor, actualCompressionLineWidth });
+            wxPen { actualCompressionColor, GetActualCompressionLineWidth() });
          actualGc->DrawLines(mActual.size(), mActual.data());
-
-         // So that we can converge to `actualCompressionColor` at the crossings
-         // of actual and target compression.
-         InsertCrossings(mTarget, mActual);
-
-         wxGraphicsGradientStops stops;
-         const auto xLeft = mActual.front().m_x;
-         const auto xRight = mActual.back().m_x;
-         const auto span = xRight - xLeft;
-         for (auto i = 0; i < mActual.size(); ++i)
+         if (MayUsePenGradients())
          {
-            const auto diff = mTarget[i].m_y - mActual[i].m_y;
-            const auto actualIsBelow = diff < 0;
-            const auto w = std::min(1.0, std::abs(diff) * dbPerPixel / 6);
-            const auto color = GetColorMix(
-                                  actualIsBelow ? releaseColor : attackColor,
-                                  actualCompressionColor, w)
-                                  .GetRGB();
-            stops.Add(color, (mActual[i].m_x - xLeft) / span);
-         }
-         wxGraphicsPenInfo penInfo;
-         penInfo
-            .LinearGradient(
-               mActual.front().m_x, 0, mActual.back().m_x, 0, stops)
-            .Width(targetCompressionLineWidth);
+            // So that we can converge to `actualCompressionColor` at the
+            // crossings of actual and target compression.
+            InsertCrossings(mTarget, mActual);
 
-         actualGc->SetPen(actualGc->CreatePen(penInfo));
-         actualGc->DrawLines(mActual.size(), mActual.data());
+            wxGraphicsGradientStops stops;
+            const auto xLeft = mActual.front().m_x;
+            const auto xRight = mActual.back().m_x;
+            const auto span = xRight - xLeft;
+            for (auto i = 0; i < mActual.size(); ++i)
+            {
+               const auto diff = mTarget[i].m_y - mActual[i].m_y;
+               const auto actualIsBelow = diff < 0;
+               const auto w = std::min(1.0, std::abs(diff) * dbPerPixel / 6);
+               const auto color = GetColorMix(
+                                     actualIsBelow ? releaseColor : attackColor,
+                                     actualCompressionColor, w)
+                                     .GetRGB();
+               stops.Add(color, (mActual[i].m_x - xLeft) / span);
+            }
+            wxGraphicsPenInfo penInfo;
+            penInfo
+               .LinearGradient(
+                  mActual.front().m_x, 0, mActual.back().m_x, 0, stops)
+               .Width(targetCompressionLineWidth);
+
+            actualGc->SetPen(actualGc->CreatePen(penInfo));
+            actualGc->DrawLines(mActual.size(), mActual.data());
+         }
       }
 
       if (mShowTarget)

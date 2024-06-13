@@ -12,6 +12,7 @@
 
 #include <memory>
 #include <wx/colour.h>
+#include <wx/platinfo.h>
 
 class wxGraphicsContext;
 class wxPaintDC;
